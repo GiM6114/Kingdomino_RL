@@ -42,7 +42,6 @@ class Kingdomino:
     
     def reset(self):
         # last position in list : plays last
-        self.previous_scores = np.zeros(5, dtype='int16')
         self.last_turn = False
         self.current_tiles = []
         self.turnNb = 0
@@ -63,15 +62,6 @@ class Kingdomino:
         self._current_player_itr = v
         if self._current_player_itr == self.nb_players:
             self._current_player_itr = 0
-        if self._current_player_itr == 0:
-            if not self.last_turn:
-                self.startTurn()
-            else:
-                self.scores = np.zeros([self.nb_players,2], dtype='uint8')
-                for i,board in enumerate(self.boards):
-                    self.scores[i,1] = board.count() + (5 if self.player_placed_all[i] else 0)
-                    self.scores[i,2] = i
-                self.scores.sort(axis=0)
     
     
     def scores(self):
@@ -106,7 +96,7 @@ class Kingdomino:
         self.current_player_itr += 1
         self.player_can_play[player_id] = True
         
-        
+        return self.scores()
 
 
     def pickTile(self, player_id, tile_id):

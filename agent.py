@@ -1,15 +1,11 @@
+import random
 import numpy as np
+import torch.nn as nn
+import torch.nn.functional as func
 
 class Player:
     def __init__(self, _id):
         self.id = _id
-    
-    def chooseTile(self):
-        pass
-    
-    def placeTile(self):
-        pass
-
 
 
 class HumanPlayer(Player):  
@@ -32,6 +28,11 @@ class HumanPlayer(Player):
 
 class LearningPlayer(Player):
     
+    def __init__(self, _id, epsilon=0.1):
+        super(LearningPlayer, self).__init__(_id)
+        self.epsilon = 0.1
+        self.previous_scores = np.zeros(4, dtype='int16')
+    
     def tilePlayerToState(self, tile_player, skip_id=True):
         base = np.array(
             [tile_player.tile.tile1.type, 
@@ -49,6 +50,7 @@ class LearningPlayer(Player):
         return state
         
     
+    # "Rough state" : all data in one big np array
     def gameToState(self, kingdomino):
         # First 160 inputs : the agent's boards (env and crowns (without center))
         state = -np.ones(676)
@@ -79,4 +81,89 @@ class LearningPlayer(Player):
             idx += 5
         idx += (4-kingdomino.nb_players) * 5
         
-        return state   
+        return state
+
+# Preliminary neural net that reduces information from a board (160) + a previous tile (4) to 10 variables
+class PlayersDataNeuralNet(nn.Module):
+    def __init__(self):
+        super(PlayersDataNeuralNet, self).__init__()
+        self.nb_outputs = 10
+        self.fc1 = nn.Linear(164, 120)
+        self.fc2 = nn.Linear(120, 60)
+        self.fc3 = nn.Linear(60, self.nb_outputs)
+        
+    def forward(self, x):
+        x = func.selu(self.fc1(x))
+        x = func.selu(self.fc2(x))
+        x = func.selu(self.fc3(x))
+        return x
+
+class NeuralNet(nn.Module):
+    def __init__(self):
+        self.lsm = nn.LogSoftmax(dim=0)
+        super(NeuralNet, self).__init__()
+        self.players_data_neural_net = PlayersDataNeuralNet()
+        self.fc1 = nn.Linear(self.players_data_neural_net.nb_outputs*4 + 5*4, 20)
+        self.fc2 = nn.Linear(20,20)
+        self.fc3 = nn.Linear(20,20)
+        self.fc4 = nn.Linear(20,20)
+        
+        # one-hot encoding for the output of tile to choose
+        self.tile_to_take_layer = nn.Linear(20, 4)
+        
+        # one-hot encoding for the output of position to place previous_tile
+        # 8 pos in a line of 9, *2 for inverted tile, *9 for each line = 
+        # - 2 for around the castle
+        # everything *2 because horizontal and vertical
+        self.pos_to_place_layer = nn.Linear(20, 284)
+        
+    def forward(self, players_data, current_tiles_data):
+        players_data = np.apply_along_axis(self.players_data_neural_net.forward, 1, players_data)
+        x = np.append(players_data, current_tiles_data)
+        
+        x = func.selu(self.fc1(x))
+        x = func.selu(self.fc2(x))
+        x = func.selu(self.fc3(x))   
+        x = func.selu(self.fc4(x))
+        
+        tile_to_take = torch.argmax(self.lsm(func.selu(self.tile_to_take_layer(x))))        
+        pos_to_place = torch.argmax(self.lsm(func.selu(self.pos_to_place_layer(x))))
+        
+        return tile_to_take, pos_to_place
+
+class NNAgent(LearningPlayer):
+    
+    def __init__(self, device, _id):
+        super(NNAgent, self).__init__(_id)
+    
+    def gameToState(self, kingdomino):
+        player_data = -2 * np.ones([4,164]) # -2 : no player 3/4, -1 : empty but there is a player
+        player_data[0,:160] = self.boardToState(kingdomino.boards[self.id].board)
+        player_data[0,160:164] = self.tilePlayerToState(kingdomino.previous_tiles[self.id])
+        
+        other_ids = [i for i in range(kingdomino.nb_players) if i!=self.id]
+        idx = 160
+        for _id in other_ids:
+            player_data[_id,idx:idx+160] = self.boardToState(kingdomino.boards[_id].board)
+            idx += 160
+            player_data[_id,idx:idx+4] = self.tilePlayerToState(kingdomino.previous_tiles[_id])
+            idx += 4
+        
+        current_tiles_data = -2 * np.ones(20)
+        idx = 0
+        for i,current_tile in enumerate(kingdomino.current_tiles):
+            current_tiles_data[i*5, (i+1)*5] = self.tilePlayerToState(current_tile, skip_id=False)
+            idx += 5
+        
+        return player_data, current_tiles_data
+        
+        
+    def playRandom(self, kingdomino):
+        pass
+    
+    def play(self, kingdomino):
+        
+        if random.rand() < self.epsilon:
+            return self.playRandom(kingdomino)
+        
+        player_data,current_tiles_data = self.gameToState(kingdomino)
