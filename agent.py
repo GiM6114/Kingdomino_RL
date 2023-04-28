@@ -25,6 +25,12 @@ class HumanPlayer(Player):
         y2 = int(input("y2 ? "))
         return x1,y1,x2,y2
     
+class RandomPlayer(Player):
+    def chooseTile(self, kingdomino):
+        return kingdomino.pickTileRandom(self.id)
+    
+    def placeTile(self, tile_id, kingdomino):
+        return kingdomino.placeTileRandom(self.id, kingdomino.current_tiles[tile_id])
 
 class LearningPlayer(Player):
     

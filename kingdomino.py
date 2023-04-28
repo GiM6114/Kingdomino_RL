@@ -111,7 +111,14 @@ class Kingdomino:
         self.player_can_play[player_id] = self.isTilePlaceable(player_id, self.current_tiles[tile_id].tile)
         self.player_placed_all[player_id] = False
     
-
+    def pickTileRandom(self, player_id):
+        open_tiles = []
+        print(self.current_tiles)
+        for tile in self.current_tiles:
+            if not tile.isSelected():
+                open_tiles.append(tile)
+        self.pickTile(player_id, random.sample(open_tiles, k=1)[0])
+        
 
     def placeTile(self, player_id, position, tile):
         self.checkPlacementValid(player_id, position, tile)     
@@ -125,6 +132,14 @@ class Kingdomino:
             print(self.boards[player_id])
             
         return True
+    
+    def placeTileRandom(self, player_id, tile):
+        positions = self.getPossiblePositions(player_id, tile)
+        if positions:
+            position = random.sample(positions, k=1)[0]
+        else:
+            self.player_can_play[player_id] = False
+        self.placeTile(player_id, position, tile)
        
     # Pulls out 4 tiles from the stack
     def draw(self):
@@ -132,7 +147,6 @@ class Kingdomino:
         self.current_tiles = [Kingdomino.TilePlayer(tile) for tile in random.sample(self.tiles,4)]
         self.tiles = [tile for tile in self.tiles if tile not in self.current_tiles]
         self.current_tiles = sorted(self.current_tiles, key=lambda x: x.tile.value)
-
     
     def printCurrentTiles(self):
         print('Tiles to pick from : \n')
@@ -174,9 +188,9 @@ class Kingdomino:
                     return True
                 
         return False
-                
     
-    def isTilePlaceable(self, player_id, tile):
+    def getPossiblePositions(self, player_id, tile, every_pos=False):
+        available_pos = []
         for i in range(9):
             for j in range(9):
                 if self.boards[player_id].getBoard(i, j) == -1:
@@ -185,10 +199,16 @@ class Kingdomino:
                             if (_i != i and _j != j) or (_i==i and _j==j) or self.boards[player_id].getBoard(_i, _j) != -1:
                                 continue
                             try:
-                                self.checkPlacementValid(player_id, TilePosition(i,j,_i,_j), tile)
-                                return True
+                                pos = TilePosition(i,j,_i,_j)
+                                self.checkPlacementValid(player_id, pos, tile)
+                                available_pos.append(pos)
+                                if not every_pos:
+                                    return available_pos
                             except GameException:
                                 pass
-        return False
+        return available_pos
+    
+    def isTilePlaceable(self, player_id, tile):
+        return self.getPossiblePositions(player_id, tile, every_pos=False)
                             
 
