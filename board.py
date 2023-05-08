@@ -6,10 +6,13 @@ class Zone:
 
 class Board:
     def __init__(self):
+        self.max_planks = 12
         self.reset()
         
     
     def reset(self):
+        self.nb_planks = 0
+        
         self.board = -np.ones([9,9], dtype='int8')
         self.board[4,4] = -2
         self.crown = np.zeros([9,9], dtype='uint8')
@@ -21,7 +24,7 @@ class Board:
         
     
     def getBoard(self, x, y):
-        if x > 0 and x < 9 and y > 0 and y < 9:
+        if 9 > x > 0 and 9 > y > 0:
             return self.board[x,y]
         return -1
     
@@ -29,6 +32,7 @@ class Board:
     def setBoard(self, position, v):
         self.board[position] = v
         if v != -1:
+            self.nb_planks += 1
             self.left_most   = min(self.left_most, position[0])
             self.right_most  = max(self.right_most, position[0])
             self.bottom_most = min(self.bottom_most, position[1])
@@ -49,10 +53,13 @@ class Board:
                 nb_squares,nb_crowns = self.computeZone(x, y, board_seen, self.board[x,y])
                 score += nb_squares * nb_crowns
 
+        # The Middle Kingdom
         if self.isCastleCentered():
             score += 10
-        
-        
+            
+        # Harmony
+        if self.nb_planks == self.max_planks:
+            score += 5
         
         return score
                 

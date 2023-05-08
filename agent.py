@@ -3,9 +3,31 @@ import numpy as np
 import torch.nn as nn
 import torch.nn.functional as func
 
+from board import Board
+
 class Player:
     def __init__(self, _id):
         self.id = _id
+        self.reset()
+        
+    def reset(self):
+        self.board = Board()
+        self.previous_tile = None
+        self.current_tile = None
+        self.placed_all = True
+    
+    def startTurn(self):
+        if self.current_tile is not None:
+            self.previous_tile = self.current_tile
+    
+    def __str__(self):
+        return 'Player ' + str(self.id)
+    
+    def chooseTile(self, kingdomino):
+        pass
+    
+    def placeTile(self, kingdomino):
+        pass
 
 
 class HumanPlayer(Player):  
@@ -15,6 +37,7 @@ class HumanPlayer(Player):
             print('Tile previously chosen : ', kingdomino.previous_tiles[self.id])
         except:
             pass
+        print(kingdomino.printCurrentTiles())
         tile_id = input("Which tile do you choose ?")
         return int(tile_id)
         
@@ -27,10 +50,10 @@ class HumanPlayer(Player):
     
 class RandomPlayer(Player):
     def chooseTile(self, kingdomino):
-        return kingdomino.pickTileRandom(self.id)
+        return kingdomino.selectTileRandom()
     
-    def placeTile(self, tile_id, kingdomino):
-        return kingdomino.placeTileRandom(self.id, kingdomino.current_tiles[tile_id])
+    def placeTile(self, kingdomino):
+        return kingdomino.selectTilePositionRandom(self, self.previous_tile)
 
 class LearningPlayer(Player):
     

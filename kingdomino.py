@@ -1,8 +1,12 @@
 import random
 import numpy as np
+from collections import namedtuple
+from itertools import permutations
+
 
 from setup import GET_TILE_DATA
 from board import Board
+from agent import Player
 
 
 class GameException(Exception):
@@ -22,38 +26,62 @@ class TilePosition:
         self.points = self.p1,self.p2
 
 
-class Kingdomino:   
+
+class TileDeck:      
+    def __init__(self):
+        self.tile_data = GET_TILE_DATA() #list of Tile
+        self.nb_tiles = len(self.tile_data)
+        self.open_tiles = []
+        self.reset()
+        
+    def reset(self):
+        self.open_tiles.clear()
+        self.open_tiles.extend(self.tile_data) # extend does a copy
+            
+    def draw(self, nb):
+        tiles = []
+        for i in range(nb):
+            tile_id = random.randint(0, len(self.open_tiles)-1)
+            tiles.append(self.open_tiles.pop(tile_id))
+        return tiles
+        
+        
+class TilePlayer:
+    def __init__(self, tile, order=None, player=None):
+        self.order = order
+        self.tile = tile
+        self.player = player
+    def isSelected(self):
+        return self.player != None
+    def __str__(self):
+        return str(self.tile) + ' ' + str(self.player)
+
+class Kingdomino:
     
-    class TilePlayer:
-        def __init__(self, tile, player_id=-1):
-            self.tile = tile
-            self.player_id = player_id
-        def isSelected(self):
-            return self.player_id != -1
-        def __str__(self):
-            return str(self.tile) + ' ' + str(self.player_id)
+    discard_tile = np.array([-1,-1])
     
-    def __init__(self, nb_players=4, compute_scores_every_round=True, log=False):
+    def __init__(self, players, compute_scores_every_round=True, log=False):
+        self.players = players
+        self.nb_players = len(self.players)
         self.compute_scores_every_round = compute_scores_every_round
         self.log = log
-        self.nb_players = nb_players
-        self.tiles = GET_TILE_DATA()
+
+        self.tile_deck = TileDeck()
         self.reset()
     
     def reset(self):
         # last position in list : plays last
+        self.tile_deck.reset()
         self.last_turn = False
         self.current_tiles = []
         self.turnNb = 0
-        self.order = np.arange(0, self.nb_players)
+        self.order = np.random.permutation(self.nb_players)
         self.new_order = self.order.copy()
-        self.boards = [Board() for i in range(self.nb_players)]
-        self.player_can_play = np.ones(4, dtype='bool')
-        self.player_previous_tiles = [None, None, None, None]
-        self.player_current_tiles = [None, None, None, None]
-        self.player_placed_all = np.ones(4, dtype='bool')
+        for player in self.players:
+            player.reset()
         self.current_player_itr = 0
-        
+    
+    
     @property
     def current_player_itr(self):
         return self._current_player_itr
@@ -62,91 +90,98 @@ class Kingdomino:
         self._current_player_itr = v
         if self._current_player_itr == self.nb_players:
             self._current_player_itr = 0
-    
-    
+        if self._current_player_itr == 0:
+            self.startTurn()
+            
+            
     def scores(self):
-        scores = np.zeros(self.nb_players)
-        for i,board in enumerate(self.boards):
-            scores[i] = board.count()
-        return scores
+        return [p.board.count() for p in self.players]
         
-        
+    
+    # Automatically called when current_player_itr is set to 0
     def startTurn(self):
         self.order = self.new_order.copy()
-        self.player_previous_tiles = self.player_current_tiles.copy()
-        if len(self.tiles) >= self.nb_players:
-            self.draw()
-        else:
-            self.last_turn = True        
+        for player in self.players:
+            player.startTurn()
+        self.draw()
+        if len(self.current_tiles) < self.nb_players:
+            self.last_turn = True    
 
     
     # player_id         : player who wants to play
     # tile_id           : id of tile he wants to pick if there is still tiles to pick
     # position_inversed : tuple (TilePosition, bool) if there is a tile the player has
-    def play(self, player_id, tile_id=None, position=None):
-        if player_id != self.order[self.current_player_itr]:
-            raise GameException(f'Error : Player {self.current_player} should play, not player {player_id} !')
-        # Select tile
-        if tile_id is not None:
-            self.pickTile(player_id, tile_id)
-        print('Tile picked playable ? ' + str(self.player_can_play[player_id]))
-        if position is not None and self.player_can_play[player_id]:
-            print('tile : ',  self.player_previous_tiles[player_id].tile)
-            self.placeTile(player_id, position, self.player_previous_tiles[player_id].tile)
-        self.current_player_itr += 1
-        self.player_can_play[player_id] = True
+    def play(self, player, tile_id, position=None):
+        if player.id != self.order[self.current_player_itr]:
+            raise GameException(f'Error : Player {self.current_player} should play, not {player} !')
         
-        return self.scores()
+        # Select tile
+        if not self.last_turn:
+            self.pickTile(player, tile_id)
+
+        if position is not None:
+            if not (position == Kingdomino.discard_tile).all():
+                print('tile : ',  player.previous_tile.tile)
+                self.placeTile(player, position, player.previous_tile.tile)
+            else:
+                print('tile discarded')
+        self.current_player_itr += 1
+        
+        if self.compute_scores_every_round:
+            return self.scores()
 
 
-    def pickTile(self, player_id, tile_id):
+    def pickTile(self, player, tile_id):
         if not self.current_tiles:
             raise GameException('Error : No tiles left !')
-        if self.current_tiles[tile_id].isSelected():
-            raise GameException(f'Error : Player {player_id} cannot choose tile {tile_id} because it is already selected !')
-        self.new_order[tile_id] = player_id
-        self.current_tiles[tile_id].player_id = player_id
-        self.player_current_tiles[player_id] = self.current_tiles[tile_id]
-        # if player selects a tile they won't be able to place
-        self.player_can_play[player_id] = self.isTilePlaceable(player_id, self.current_tiles[tile_id].tile)
-        self.player_placed_all[player_id] = False
+
+        tile = self.current_tiles[tile_id]
+
+        if tile.isSelected():
+            raise GameException(f'Error : {player} cannot choose tile {player.current_tile} because it is already selected !')
+        
+        self.new_order[tile.order] = player.id
+        player.current_tile = tile
+        tile.player = player
+
     
-    def pickTileRandom(self, player_id):
+    def selectTileRandom(self):
         open_tiles = []
-        print(self.current_tiles)
-        for tile in self.current_tiles:
+        for i,tile in enumerate(self.current_tiles):
             if not tile.isSelected():
-                open_tiles.append(tile)
-        self.pickTile(player_id, random.sample(open_tiles, k=1)[0])
+                open_tiles.append(i)
+        return random.sample(open_tiles, k=1)[0]
         
 
-    def placeTile(self, player_id, position, tile):
-        self.checkPlacementValid(player_id, position, tile)     
+    def placeTile(self, player, position, tile):
+        self.checkPlacementValid(player, position, tile)     
 
-        self.boards[player_id].setBoard(position.points[0], v=tile.tile1.type)
-        self.boards[player_id].setBoard(position.points[1], v=tile.tile2.type)
-        self.boards[player_id].setBoardCrown(position.points[0], v=tile.tile1.nb_crown)
-        self.boards[player_id].setBoardCrown(position.points[1], v=tile.tile2.nb_crown)
+        player.board.setBoard(position.points[0], v=tile.tile1.type)
+        player.board.setBoard(position.points[1], v=tile.tile2.type)
+        player.board.setBoardCrown(position.points[0], v=tile.tile1.nb_crown)
+        player.board.setBoardCrown(position.points[1], v=tile.tile2.nb_crown)
         
         if self.log:
-            print(self.boards[player_id])
+            print(player.board)
             
         return True
     
-    def placeTileRandom(self, player_id, tile):
-        positions = self.getPossiblePositions(player_id, tile)
+    def selectTilePositionRandom(self, player, tile):
+        positions = self.getPossiblePositions(player, tile)
         if positions:
             position = random.sample(positions, k=1)[0]
         else:
-            self.player_can_play[player_id] = False
-        self.placeTile(player_id, position, tile)
+            position = Kingdomino.discard_tile
+        return position
        
-    # Pulls out 4 tiles from the stack
+    # Pulls out tiles from the stack
     def draw(self):
-        self.previous_tiles = self.current_tiles.copy()
-        self.current_tiles = [Kingdomino.TilePlayer(tile) for tile in random.sample(self.tiles,4)]
-        self.tiles = [tile for tile in self.tiles if tile not in self.current_tiles]
+        self.current_tiles = [TilePlayer(tile) 
+                              for tile 
+                              in self.tile_deck.draw(self.nb_players)]
         self.current_tiles = sorted(self.current_tiles, key=lambda x: x.tile.value)
+        for order,tile in enumerate(self.current_tiles):
+            tile.order = order
     
     def printCurrentTiles(self):
         print('Tiles to pick from : \n')
@@ -155,22 +190,23 @@ class Kingdomino:
 
     # position : TilePosition
     # inversed false : position.p1 corresponds to first tile
-    def checkPlacementValid(self, player_id, position, tile):   
-        # Add for check in 5x5 square TODO
-        
-        # Check no overlapping
+    # TODO : perhaps speed this up with position as a numpy array
+    def checkPlacementValid(self, player, position, tile):           
+        # Check five square and no overlapping
         for point in position.points:
-            if self.boards[player_id].getBoard(point[0], point[1]) != -1:
+            if not player.board.isInFiveSquare(point):
+                raise GameException(f'{point} is not in a five square.')
+            if player.board.getBoard(point[0], point[1]) != -1:
                 raise GameException(f'Overlapping at point {point}.')
         
         # Check that at least one position is near castle or near same type of env
         for point in position.points:
-            if self.isNeighbourToCastleOrSame(player_id, point, tile):
+            if self.isNeighbourToCastleOrSame(player, point, tile):
                 return
         raise GameException('Not next to castle or same type of env.')    
     
     
-    def isNeighbourToCastleOrSame(self, player_id, point, tile):
+    def isNeighbourToCastleOrSame(self, player, point, tile):
         # Check if castle next
         if point in [(3,4),(4,3),(4,5),(5,4)]:
             return True
@@ -184,23 +220,23 @@ class Kingdomino:
                 if i != point[0] and j != point[1]:
                     continue
 
-                if self.boards[player_id].getBoard(i,j) == tileToCompareType:
+                if player.board.getBoard(i,j) == tileToCompareType:
                     return True
                 
         return False
     
-    def getPossiblePositions(self, player_id, tile, every_pos=False):
+    def getPossiblePositions(self, player, tile, every_pos=False):
         available_pos = []
         for i in range(9):
             for j in range(9):
-                if self.boards[player_id].getBoard(i, j) == -1:
+                if player.board.getBoard(i, j) == -1:
                     for _i in range(i-1,i+2):
                         for _j in range(j-1,j+2):
-                            if (_i != i and _j != j) or (_i==i and _j==j) or self.boards[player_id].getBoard(_i, _j) != -1:
+                            if (_i != i and _j != j) or (_i==i and _j==j) or player.board.getBoard(_i, _j) != -1:
                                 continue
                             try:
                                 pos = TilePosition(i,j,_i,_j)
-                                self.checkPlacementValid(player_id, pos, tile)
+                                self.checkPlacementValid(player, pos, tile)
                                 available_pos.append(pos)
                                 if not every_pos:
                                     return available_pos
@@ -208,7 +244,7 @@ class Kingdomino:
                                 pass
         return available_pos
     
-    def isTilePlaceable(self, player_id, tile):
-        return self.getPossiblePositions(player_id, tile, every_pos=False)
+    def isTilePlaceable(self, player, tile):
+        return self.getPossiblePositions(player, tile, every_pos=False)
                             
 
