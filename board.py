@@ -29,17 +29,16 @@ class Board:
         return -1
     
     
-    def setBoard(self, position, v):
-        self.board[position] = v
-        if v != -1:
+    # position : np.array([pos halftile 1, pos halftile 2])
+    def placeTile(self, position, tile):
+        self.board[position[0],position[1]] = tile[:2]
+        if tile[0] != -1:
             self.nb_planks += 1
-            self.left_most   = min(self.left_most, position[0])
-            self.right_most  = max(self.right_most, position[0])
-            self.bottom_most = min(self.bottom_most, position[1])
-            self.top_most    = max(self.top_most, position[1])
-                
-    def setBoardCrown(self, position, v):
-        self.crown[position] = v
+            self.left_most = min(self.left_most, np.min(position[:,0]))
+            self.right_most = max(self.right_most, np.max(position[:,0]))
+            self.bottom_most = max(self.bottom_most, np.max(position[:,1]))
+            self.top_most = min(self.top_most, np.min(position[:,1])) # inverted for display
+        self.crown[position[0],position[1]] = tile[2:4]    
            
     
     def count(self):
@@ -67,7 +66,6 @@ class Board:
     def computeZone(self, x, y, board_seen, env_type):
         if self.getBoard(x, y) != env_type or board_seen[x,y] == 1:
             return 0,0
-        
         board_seen[x,y] = 1
         
         add_squares = 0
@@ -76,6 +74,7 @@ class Board:
             for j in range(y-1, y+2):
                 # Get rid of diagonals
                 if i != x and j != y:
+        
                     continue
                 add_squares_temp,add_crowns_temp = self.computeZone(
                     i, j, board_seen, env_type

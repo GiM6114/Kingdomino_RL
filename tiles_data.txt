@@ -1,6 +1,3 @@
-#### [Type of half tile 1]:[nb of crowns on this side] , [Type of half tile 2]:[nb of crowns on this side] ; [value of the tile]
-#### Note 1 : half tile 1 and 2 chosen arbitrarily between the two half tiles
-#### Note 2 : [Type of tile x]:0 can be simplified to [Type of tile x]
 Forest, Forest  ; 6
 Grass, Grass    ; 11
 Swamp, Mine:2   ; 46

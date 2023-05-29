@@ -12,48 +12,33 @@ class Player:
         
     def reset(self):
         self.board = Board()
-        self.previous_tile = None
-        self.current_tile = None
-        self.placed_all = True
-    
-    def startTurn(self):
-        if self.current_tile is not None:
-            self.previous_tile = self.current_tile
+
     
     def __str__(self):
         return 'Player ' + str(self.id)
     
-    def chooseTile(self, kingdomino):
+    def give_scores(self, scores):
         pass
     
-    def placeTile(self, kingdomino):
+    def action(self, state):
         pass
 
 
-class HumanPlayer(Player):  
-    
-    def chooseTile(self, kingdomino):
-        try:
-            print('Tile previously chosen : ', kingdomino.previous_tiles[self.id])
-        except:
-            pass
-        print(kingdomino.printCurrentTiles())
+class HumanPlayer(Player):      
+    def action(self, state):
         tile_id = input("Which tile do you choose ?")
-        return int(tile_id)
-        
-    def placeTile(self, kingdomino):
         x1 = int(input("x1 ? "))
         y1 = int(input("y1 ? "))      
         x2 = int(input("x2 ? "))
         y2 = int(input("y2 ? "))
-        return x1,y1,x2,y2
-    
+        return tile_id, (x1,y1,x2,y2)
+
+
 class RandomPlayer(Player):
-    def chooseTile(self, kingdomino):
-        return kingdomino.selectTileRandom()
-    
-    def placeTile(self, kingdomino):
-        return kingdomino.selectTilePositionRandom(self, self.previous_tile)
+    def action(self, state):
+        return (self.kingdomino.selectTileRandom(),
+                self.kingdomino.selectTilePositionRandom(self))
+
 
 class LearningPlayer(Player):
     
