@@ -42,6 +42,8 @@ class TileDeck:
     
     
     def draw(self, nb):
+        if self.open_tiles.shape[0] < nb:
+            return None
         tiles = np.zeros((nb,TILE_SIZE))
         for i in range(nb):
             Printer.print('Open tiles shape :', self.open_tiles.shape)
@@ -71,7 +73,6 @@ class Kingdomino:
         self.players = players
         self.n_players = len(self.players)
         self.tile_deck = TileDeck()
-        self.player_to_previous_tile_id = np.zeros(self.n_players)
 
     
     def reset(self):
@@ -82,7 +83,6 @@ class Kingdomino:
         self.current_tiles = np.zeros((self.n_players, TILE_SIZE))
         self.current_tiles_player = -np.ones(self.n_players)
         self.previous_tiles = np.zeros((self.n_players, TILE_SIZE))
-        self.previous_tiles_player = -np.ones(self.n_players)
         self.order = np.random.permutation(self.n_players)
         self.new_order = self.order.copy()
         for player in self.players:
@@ -97,7 +97,7 @@ class Kingdomino:
     @current_player_itr.setter
     def current_player_itr(self, v):
         self._current_player_itr = v
-        if self._current_player_itr == self.n_players-1:
+        if self._current_player_itr == self.n_players:
             self.first_turn = False
             self._current_player_itr = 0
             self.startTurn()
@@ -109,19 +109,23 @@ class Kingdomino:
     
     # Automatically called when current_player_itr is set to 0
     def startTurn(self):
+        Printer.print('Starting new turn')
         self.order = self.new_order.copy()
+        Printer.print('Player order :', self.order)
         self.draw()
-        self.previous_tiles_player = self.current_tiles_player.copy()
-        self.current_tiles_player[:] = -1
-        if len(self.current_tiles) < self.n_players:
+        if self.current_tiles is None:
+            Printer.print('This is the last turn.')
             self.last_turn = True
+        else:
+            self.current_tiles_player[:] = -1
 
 
     # Pulls out tiles from the stack
     def draw(self):
-        self.previous_tiles = self.current_tiles.copy()
+        self.previous_tiles = self.current_tiles.copy()[self.order]
         self.current_tiles = self.tile_deck.draw(self.n_players)
-        self.current_tiles = self.current_tiles[self.current_tiles[:,-1].argsort()]
+        if self.current_tiles is not None:
+            self.current_tiles = self.current_tiles[self.current_tiles[:,-1].argsort()]
         Printer.print('Current tiles :', self.current_tiles)
 
     
@@ -129,10 +133,10 @@ class Kingdomino:
     # tile_id           : id of tile he wants to pick if there is still tiles to pick
     # position_inversed : tuple (TilePosition, bool) if there is a tile the player has
     def step(self, player, action):
-        Printer.print('Player', player)
+        Printer.print(player, "'s turn")
         Printer.print('Action :', action)
         if player.id != self.order[self.current_player_itr]:
-            raise GameException(f'Error : Player {self.current_player} should play, not {player} !')
+            raise GameException(f'Error : Player {self.order[self.current_player_itr]} should play, not {player} !')
         
         tile_id, position = action
         
@@ -142,7 +146,7 @@ class Kingdomino:
 
         if not self.first_turn:
             if not (position == Kingdomino.discard_tile).all():
-                self.placeTile(player, position, player.previous_tile)
+                self.placeTile(player, position, self.previous_tiles[player.id])
                 Printer.print(player.board)
             else:
                 Printer.print('Tile discarded')
@@ -165,7 +169,7 @@ class Kingdomino:
         for i,player in enumerate(self.players):
             obs['Boards'][i,0] = player.board.board
             obs['Boards'][i,1] = player.board.crown
-            obs['Previous tiles'][i] = self.previous_tiles[self.]
+        obs['Previous tiles'] = self.previous_tiles
 
         obs['Current tiles'][:,:-1] = self.current_tiles
         obs['Current tiles'][:,-1] = self.current_tiles_player
@@ -179,14 +183,14 @@ class Kingdomino:
         
         self.new_order[tile_id] = player.id
         self.current_tiles_player[tile_id] = player.id
-        self.player_to_previous_tile_id[player.id] = tile_id
+    
     
     def selectTileRandom(self):
+        if self.last_turn:
+            return None
         available = np.where(self.current_tiles_player == -1)[0]
-        idx = available[random.randint(0, len(available)-1)]
-        print(available)
-        print(idx)
-        return idx
+        tile_id = available[random.randint(0, len(available)-1)]
+        return tile_id
         
 
     def placeTile(self, player, position, tile):
@@ -198,7 +202,7 @@ class Kingdomino:
         if self.first_turn:
             return None
         
-        tile = self.previous_tiles[self.player_to_previous_tile_id]
+        tile = self.previous_tiles[player.id]
         
         positions = self.getPossiblePositions(player, tile)
         if positions:

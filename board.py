@@ -1,4 +1,5 @@
 import numpy as np
+from tabulate import tabulate
 
 class Zone:
     def __init__(self):
@@ -31,6 +32,7 @@ class Board:
     
     # position : np.array([pos halftile 1, pos halftile 2])
     def placeTile(self, position, tile):
+        position = position.T
         self.board[position[0],position[1]] = tile[:2]
         if tile[0] != -1:
             self.nb_planks += 1
@@ -87,19 +89,20 @@ class Board:
     
     def isInFiveSquare(self, point):
         return not (self.right_most - point[0] >= 5
-                    or self.top_most - point[1] >= 5 
+                    or self.bottom_most - point[1] >= 5 
                     or point[0] - self.left_most >= 5
-                    or point[1] - self.bottom_most >= 5)
+                    or point[1] - self.top_most >= 5)
     
     
     def isCastleCentered(self):
         return self.left_most == 2 and self.right_most == 6 and self.bottom_most == 2 and self.top_most == 6
         
     
-    def __str__(self):
+    def __str__(self):     
         string = ''
         for j in reversed(range(9)):
             for i in range(9):
-                string += f'{self.board[i,j]}' + (' | ' if self.crown[i,j] == 0 else f'+{self.crown[i,j]} | ')
+                addition = ( (f'{self.board[i,j]}' if self.board[i,j] != -1 else '') + ('' if self.crown[i,j] == 0 else f'+{self.crown[i,j]}')).center(5,' ')
+                string += addition + '|'
             string += '\n'
         return string
