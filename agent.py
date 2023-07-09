@@ -1,7 +1,8 @@
 import random
 import numpy as np
 import torch.nn as nn
-import torch.nn.functional as func
+import torch.nn.functional as F
+import torch
 
 from board import Board
 
@@ -40,67 +41,102 @@ class RandomPlayer(Player):
                 self.kingdomino.selectTilePositionRandom(self))
 
 
-class LearningPlayer(Player):
+class PlayerAC(Player):
     
-    def __init__(self, _id, epsilon=0.1):
-        super(LearningPlayer, self).__init__(_id)
-        self.epsilon = 0.1
-        self.previous_scores = np.zeros(4, dtype='int16')
-    
-    def tilePlayerToState(self, tile_player, skip_id=True):
-        base = np.array(
-            [tile_player.tile.tile1.type, 
-             tile_player.tile.tile2.type, 
-             tile_player.tile.tile2.nb_crown,
-             tile_player.tile.value])
-        return base if skip_id else np.append(base, tile_player.player_id)
-    
-    
-    def boardToState(self, board):
-        relevant_columns = [0,1,2,3,5,6,7,8]
-        env_state = board[self.id].board[:,relevant_columns].flatten()
-        crown_state = board[self.id].crown[:,relevant_columns].flatten()
-        state = np.append(env_state, crown_state)
-        return state
+    def __init__(self, gamma, lr_a, lr_c):
         
+        self.gamma = gamma
+        
+        self.actor = ...
+        self.critic = ...
     
-    # "Rough state" : all data in one big np array
-    def gameToState(self, kingdomino):
-        # First 160 inputs : the agent's boards (env and crowns (without center))
-        state = -np.ones(676)
-        state[:160] = self.boardToState(kingdomino.boards[self.id])
-        
-        
-        # Next 160*3 inputs : other player's data or -1s
-        other_ids = [i for i in range(kingdomino.nb_players) if i!=self.id]
+    # obs : dictionary of np.arrays
+    # state : 1D tensor concatenating these arrays
+    # useless : need to treat boards in CNN and other values separately
+    def obs_to_state(self, obs):
+        state = np.concatenate([v.flatten() for v in obs.values()])
+        return torch.from_numpy(state)
+    
+    def action(self, obs):
+        state = self.obs_to_state(obs)
+ 
 
-        idx = 160
-        for _id in other_ids:
-            state[idx, idx+160] = self.boardToState(kingdomino.boards[self._id])
-            idx += 160     
-        idx += (4-kingdomino.nb_players) * 160
+class Shared(nn.Module):
+    def __init__(self, n_players, board_rep_size, prev_tiles_rep_size, shared_rep_size):
+        super(Shared, self).__init__()
+        self.n_players = n_players
+        self.board_rep_size = board_rep_size
+        self.prev_tiles_rep_size = prev_tiles_rep_size
+        self.shared_rep_size = shared_rep_size
         
-        # Next 4 inputs : the agent's previous tiles data
-        state[idx, idx+4] = self.tilePlayerToState(kingdomino.previous_tiles[self.id])
+        self.cnn = BoardNetwork(2,self.board_rep_size)
+        self.tiles_network = TilesNetwork(self.prev_tiles_rep_size)
         
-        # Next 4*3 inputs : others' previous tiles data
-        for _id in other_ids:
-            state[idx, idx+4] = self.tilePlayerToState(kingdomino.previous_tiles[_id])
-            idx += 4
-        idx += (4-kingdomino.nb_players) * 4
-       
-        # Next 5*4 inputs : current tiles + 1 saying which player owns it
-        for current_tile in kingdomino.current_tiles:
-            state[idx, idx+5] = self.tilePlayerToState(current_tile, skip_id=False)
-            idx += 5
-        idx += (4-kingdomino.nb_players) * 5
-        
-        return state
+        self.fc1 = nn.Linear(self.board_rep_size+self.prev_tiles_rep_size, 200)
+        self.fc2 = nn.Linear(200,200)
+        self.fc3 = nn.Linear(200,self.shared_rep_size)
 
-# Preliminary neural net that reduces information from a board (160) + a previous tile (4) to 10 variables
-class PlayersDataNeuralNet(nn.Module):
+        
+    def forward(self, x):
+        output = np.zeros((self.n_players,self.shared_rep_size))
+        boards_outputs = 
+        # loop over players
+        for i,board in enumerate(x['Boards']):
+            output[i] = self.cnn(board)
+            
+        
+        
+
+class TilesNetwork(nn.Module):
     def __init__(self):
-        super(PlayersDataNeuralNet, self).__init__()
+        
+        self.
+
+class BoardNetwork(nn.Module):
+    def __init__(self, n_channels, n_outputs):
+        super(BoardNetwork, self).__init__()
+        
+        self.conv1 = nn.Conv2d(in_channels=n_channels, out_channels=20,
+                               kernel_size=(5,5)) # 1620
+        self.relu1 = nn.ReLU()
+        self.maxpool1 = nn.MaxPool2d(kernel_size=(2,2), stride=(2,2)) # 405
+
+        self.conv2 = nn.Conv2d(in_channels=20, out_channels=50,
+                               kernel_size=(5,5))
+        self.relu2 = nn.ReLU()
+        self.maxpool2 = nn.MaxPool2d(kernel_size=(2,2), stride=(2,2))
+
+        self.fc1 = nn.Linear(in_features=100, out_features=500) # not 100    
+        self.relu3 = nn.ReLU()
+        
+        self.fc2 = nn.Linear(in_features=500, out_features=n_outputs)    
+        self.relu4 = nn.ReLU()
+        
+    def forward(self, x):
+        x = F.pad(x, (2,2,2,2), 'constant', -1) # pad each board
+        
+        x = self.conv1(x)
+        x = self.relu1(x)
+        x = self.maxpool1(x)
+        
+        x = self.conv2(x)
+        x = self.relu2(x)
+        x = self.maxpool2(x)
+        
+        x = torch.flatten(x, 1)
+        x = self.fc1(x)
+        x = self.relu3(x)
+        
+        x = self.fc2(x)
+        x = self.relu4(x)
+        
+        return x
+        
+        
+# Preliminary neural net that reduces information from a board (160) + a previous tile (4) to 10 variables
+class NeuralNet(nn.Module):
+    def __init__(self):
+        super(NeuralNet, self).__init__()
         self.nb_outputs = 10
         self.fc1 = nn.Linear(164, 120)
         self.fc2 = nn.Linear(120, 60)

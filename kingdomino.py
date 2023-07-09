@@ -174,6 +174,8 @@ class Kingdomino:
         obs['Current tiles'][:,:-1] = self.current_tiles
         obs['Current tiles'][:,-1] = self.current_tiles_player
         
+        return obs
+        
 
     def pickTile(self, player, tile_id):
         tile = self.current_tiles[tile_id]
