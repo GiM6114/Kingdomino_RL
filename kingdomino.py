@@ -4,10 +4,12 @@ from collections import namedtuple
 from itertools import permutations
 
 
-from setup import GET_TILE_DATA, TILE_SIZE
+from setup import GET_TILE_DATA, TILE_SIZE, N_TILE_TYPES
 from board import Board
 from agent import Player
 from printer import Printer
+
+import torch.nn.functional as F
 
 
 class GameException(Exception):
@@ -162,6 +164,7 @@ class Kingdomino:
     # Board : 9*9 tile type + 9*9 crowns
     # Current tiles : 2 tile type, 2 crowns, 1 which player, place in order
     # Previous tiles : 2, 2
+    # TODO : add order in obs
     def _get_obs(self):
         obs = {'Boards'         : np.zeros([self.n_players,2,9,9]),
                'Current tiles'  : np.zeros([self.n_players,TILE_SIZE+1]),

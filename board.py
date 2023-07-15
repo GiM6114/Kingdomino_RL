@@ -1,5 +1,4 @@
 import numpy as np
-from tabulate import tabulate
 
 class Zone:
     def __init__(self):

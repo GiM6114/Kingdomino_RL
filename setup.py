@@ -5,6 +5,7 @@ ENV_TYPES = ['Grass','Forest','Field','Water','Swamp','Mine']
 IDX_TO_TYPES = {i:env for i,env in enumerate(ENV_TYPES)}
 TYPES_TO_IDX = {env:i for i,env in enumerate(ENV_TYPES)}
 TILE_SIZE = 5
+N_TILE_TYPES = len(ENV_TYPES)
 
 def GET_TILE_DATA():
     types_or = '|'.join(ENV_TYPES)
