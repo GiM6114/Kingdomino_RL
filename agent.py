@@ -9,6 +9,7 @@ from board import Board
 from setup import N_TILE_TYPES
 from networks import Shared, NeuralNetwork
 
+
 class Pipeline:
     def __init__(self, player, env):
         self.player = player
@@ -52,7 +53,9 @@ class RandomPlayer(Player):
 class PlayerAC(Player):
     
     def __init__(self, env, gamma, lr_a, lr_c,
-                 coordinate_std):
+                 coordinate_std, _id):
+        
+        super().__init__(_id)
         
         self.gamma = gamma
         
@@ -72,20 +75,20 @@ class PlayerAC(Player):
             output_size=1, 
             l=5, 
             n=150)
-        params = list(self.shared.parameters) + \
-                 list(self.actor.parameters) + \
-                 list(self.critic.parameters)
+        # params = list(self.shared.parameters) + \
+        #          list(self.actor.parameters) + \
+        #          list(self.critic.parameters)
    
         self.coordinates_cov = torch.eye(2) * coordinate_std**2
    
         self.optimizer_c = torch.optim.AdamW(
-            self.shared.parameters() + self.critic.parameters(),
+            list(self.shared.parameters()) + list(self.critic.parameters()),
             amsgrad=True,
             lr=0.001)
         self.criterion_c = nn.SmoothL1Loss()
         
         self.optimizer_a = torch.optim.AdamW(
-            self.shared.parameters() + self.actor.parameters(),
+            list(self.shared.parameters()) + list(self.actor.parameters()),
             amsgrad=True,
             lr=0.0005)
         self.criterion_a = nn.SmoothL1Loss()
@@ -93,42 +96,56 @@ class PlayerAC(Player):
         self.reset()
         
     def reset(self):
+        super().reset()
         self.reward = None
-        self.action = None
+        self.tile_choice_distribution = None
+        self.tile_chosen = None
+        self.coordinates_distribution = None
+        self.coordinates_chosen = None
         self.value = None
     
     def action(self, state):
+        shared_rep = self.shared(self.id, state)
+        
+        # Here we have the previous state value, action, reward and state is the next state
+        # -> Update
         self.prev_value = self.value
-        shared_rep = self.shared(state)
-        action_output = self.actor(shared_rep)
-        
-        coordinates_output = action_output[:2]
-        coordinates_distribution = distributions.MultivariateNormal(coordinates_output, self.coordinates_cov)
-        coordinates = coordinates_distribution.sample()
-        
-        tile_output_distribution = F.softmax(action_output[2:], dim=0)
-        tile = torch.multinomial(tile_output_distribution, num_sample=1)
-                
         self.value = self.critic(shared_rep)
-        
-        # Updates
+
         if self.prev_value is not None:
             target = self.reward + self.gamma*self.value
             
+            # Critic update
             loss_c = self.criterion_c(
-                target, 
-                self.value)
+                target,
+                self.prev_value)
             self.optimizer_c.zero_grad()
-            loss_c.backward
+            loss_c.backward()
             self.optimizer_c.step()
             
-            loss_a = -torch.log() * loss_c
-            self.optimizer_c.zero_grad()
-            loss_c.backward
-            self.optimizer_c.step()
-            
-        return 
-            
+            # Actor update
+            # product of proba as tile choice and coordinates chosen for previous tiles
+            # assumeed independant (they are not)
+            loss_a = -self.coordinates_distribution.log_prob(self.coordinates_chosen) \
+                    * self.tile_choice_distribution.log_prob(self.tile_chosen) * loss_c
+            self.optimizer_a.zero_grad()
+            loss_a.backward()
+            self.optimizer_a.step()
+        
+        action_output = self.actor(shared_rep)
+        
+        coordinates_output = action_output[:2]
+        self.coordinates_distribution = distributions.MultivariateNormal(coordinates_output, self.coordinates_cov)
+        self.coordinates_chosen = torch.round(self.coordinates_distribution.sample())
+        
+        tile_output_distribution = F.softmax(action_output[2:], dim=0)
+        self.tile_choice_distribution = distributions.Multinomial(tile_output_distribution)
+        self.tile_chosen = self.tile_choice_distribution.sample()
+                
+        
+        action = (self.coordinates_chosen,self.tile_chosen)
+        
+        return action
             
 
     def give_reward(self, reward):

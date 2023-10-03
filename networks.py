@@ -11,7 +11,6 @@ class NeuralNetwork(nn.Module):
         super(NeuralNetwork, self).__init__()
 
         self.input_size = input_size
-        self.out
         
         layers = [nn.Linear(self.input_size, n)]
         for i in range(l):

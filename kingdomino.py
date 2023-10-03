@@ -15,18 +15,6 @@ import torch.nn.functional as F
 class GameException(Exception):
     def __init__(self, msg):
         self.msg = msg
-        
-# class TilePosition:
-#     def __init__(self, x1, y1, x2, y2):
-#         coords = x1,y1,x2,y2
-#         for coord in coords:
-#             if coord < 0 or coord > 8:
-#                 raise GameException('Coords should be between 0 and 8 (included).')
-#         if abs(x1 - x2 + y1 - y2) != 1:
-#             raise GameException('Coordinates should be next to each other.')
-#         self.p1 = x1,y1
-#         self.p2 = x2,y2
-#         self.points = self.p1,self.p2
 
 
 
@@ -56,26 +44,18 @@ class TileDeck:
             self.available_tiles = self.available_tiles[self.available_tiles]
         return tiles
         
-        
-# class TilePlayer:
-#     def __init__(self, tile, order=None, player=None):
-#         self.order = order
-#         self.tile = tile
-#         self.player = player
-#     def isSelected(self):
-#         return self.player != None
-#     def __str__(self):
-#         return str(self.tile) + ' ' + str(self.player)
 
 class Kingdomino:
     
     discard_tile = np.array([-1,-1])
     
-    def __init__(self, players):
-        self.players = players
-        self.n_players = len(self.players)
+    def __init__(self, n_players=None, players=None):
         self.tile_deck = TileDeck()
-
+        if players is not None:
+            self.players = players
+            self.n_players = len(self.players)
+        else:
+            self.n_players = n_players
     
     def reset(self):
         # last position in list : plays last
