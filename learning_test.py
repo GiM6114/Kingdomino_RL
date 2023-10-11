@@ -1,11 +1,21 @@
 import numpy as np
+import gym
 
 from kingdomino import Kingdomino
 from agent import RandomPlayer, PlayerAC
 from printer import Printer
 
+BATCH_SIZE = 3
 
-kingdomino = Kingdomino(2)
+envs = gym.vector.AsyncVectorEnv([
+
+    lambda: gym.make("KingDomino-v0", n_players=2),
+
+    lambda: gym.make("KingDomino-v0", n_players=2),
+
+    lambda: gym.make("KingDomino-v0", n_players=2)
+
+])
 agents = [RandomPlayer(0)]
 agents.append(PlayerAC(
     _id = 1,

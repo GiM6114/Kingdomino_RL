@@ -126,8 +126,8 @@ class PlayerAC(Player):
             # Actor update
             # product of proba as tile choice and coordinates chosen for previous tiles
             # assumeed independant (they are not)
-            loss_a = -self.coordinates_distribution.log_prob(self.coordinates_chosen) \
-                    * self.tile_choice_distribution.log_prob(self.tile_chosen) * loss_c
+            loss_a = (-self.coordinates_distribution.log_prob(self.coordinates_chosen) \
+                     -self.tile_choice_distribution.log_prob(self.tile_chosen)) * loss_c
             self.optimizer_a.zero_grad()
             loss_a.backward()
             self.optimizer_a.step()

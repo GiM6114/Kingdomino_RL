@@ -2,7 +2,8 @@ import random
 import numpy as np
 from collections import namedtuple
 from itertools import permutations
-
+import gym
+from gym import spaces
 
 from setup import GET_TILE_DATA, TILE_SIZE, N_TILE_TYPES
 from board import Board
@@ -43,21 +44,45 @@ class TileDeck:
             self.open_tiles = self.open_tiles[self.available_tiles]
             self.available_tiles = self.available_tiles[self.available_tiles]
         return tiles
-        
 
-class Kingdomino:
+#%%
+from gym.envs.registration import register
+
+register(
+    id='KingDomino-v0',
+    entry_point='kingdomino:Kingdomino')
+
+#%%
+class Kingdomino(gym.Env):
     
     discard_tile = np.array([-1,-1])
     
-    def __init__(self, n_players=None, players=None):
+    def __init__(self, n_players=None, players=None, render_mode=None):
         self.tile_deck = TileDeck()
         if players is not None:
             self.players = players
             self.n_players = len(self.players)
         else:
             self.n_players = n_players
+        self.observation_space = spaces.Dict(
+            {
+                'Boards': spaces.Box(low=-2, high=N_TILE_TYPES-1, shape=(self.n_players, 2, 9, 9), dtype=int),
+                'Previous tiles': spaces.Box(low=-2, high=N_TILE_TYPES-1, shape=(self.n_players, 4), dtype=int),
+                'Current tiles': spaces.Box(low=-2, high=N_TILE_TYPES-1, shape=(self.n_players, 6), dtype=int)
+            }
+        )
+        self.action_space = spaces.Dict(
+            {
+                'Position': spaces.Box(low=-9, high=9, shape=(2,), dtype=int),
+                'Selected tile': spaces.Box(low=0, high=self.n_players-1, shape=(1,), dtype=int) 
+            }
+        )
+        self.render_mode = render_mode
+        self.window = None
+        self.clock = None
     
-    def reset(self):
+    def reset(self, seed=None, options=None):
+        super().reset(seed=seed)
         # last position in list : plays last
         self.tile_deck.reset()
         self.first_turn = True
@@ -71,6 +96,7 @@ class Kingdomino:
             player.reset()
         self.current_player_itr = 0
         self.startTurn()
+        return self._get_obs()
     
     
     @property
@@ -142,17 +168,22 @@ class Kingdomino:
         return state, done
         
     # Board : 9*9 tile type + 9*9 crowns
-    # Current tiles : 2 tile type, 2 crowns, 1 which player, place in order
-    # Previous tiles : 2, 2
-    # TODO : add order in obs
-    def _get_obs(self):
+    # Current/Previous tiles : 2 tile type, 2 crowns, 1 which player has chosen it, 1 value of tile
+    # Previous tiles : 2 tile type, 2 crowns
+    # TODO : ORDER PLAYERS NICELY !!!! (player asking first)
+    def _get_obs(self, player_id):
         obs = {'Boards'         : np.zeros([self.n_players,2,9,9]),
                'Current tiles'  : np.zeros([self.n_players,TILE_SIZE+1]),
-               'Previous tiles' : np.zeros([self.n_players,TILE_SIZE])}
-        for i,player in enumerate(self.players):
-            obs['Boards'][i,0] = player.board.board
-            obs['Boards'][i,1] = player.board.crown
+               'Previous tiles' : np.zeros([self.n_players,TILE_SIZE+1])}
+        for i in self.order:     
+            obs['Boards'][i,0] = self.players[i].board.board
+            obs['Boards'][i,1] = self.players[i].board.crown
+        # for i,player in enumerate(self.players):
+        #     obs['Boards'][i,0] = player.board.board
+        #     obs['Boards'][i,1] = player.board.crown
+        obs['Boards'][[0,player_id]] = obs['Boards'][[player_id,0]]
         obs['Previous tiles'] = self.previous_tiles
+        obs['Previous tiles'][[0,player_id]] = obs['Previous tiles'][[player_id,0]]
 
         obs['Current tiles'][:,:-1] = self.current_tiles
         obs['Current tiles'][:,-1] = self.current_tiles_player
