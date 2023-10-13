@@ -7,7 +7,6 @@ from gym import spaces
 
 from setup import GET_TILE_DATA, TILE_SIZE, N_TILE_TYPES
 from board import Board
-from agent import Player
 from printer import Printer
 
 import torch.nn.functional as F
@@ -67,7 +66,7 @@ class Kingdomino(gym.Env):
         self.observation_space = spaces.Dict(
             {
                 'Boards': spaces.Box(low=-2, high=N_TILE_TYPES-1, shape=(self.n_players, 2, 9, 9), dtype=int),
-                'Previous tiles': spaces.Box(low=-2, high=N_TILE_TYPES-1, shape=(self.n_players, 4), dtype=int),
+                'Previous tiles': spaces.Box(low=-2, high=N_TILE_TYPES-1, shape=(self.n_players, 5), dtype=int),
                 'Current tiles': spaces.Box(low=-2, high=N_TILE_TYPES-1, shape=(self.n_players, 6), dtype=int)
             }
         )
@@ -92,8 +91,9 @@ class Kingdomino(gym.Env):
         self.previous_tiles = np.zeros((self.n_players, TILE_SIZE))
         self.order = np.random.permutation(self.n_players)
         self.new_order = self.order.copy()
-        for player in self.players:
-            player.reset()
+        self.boards = []
+        for i in range(self.n_players):
+            self.boards.append(Board())
         self.current_player_itr = 0
         self.startTurn()
         return self._get_obs()
@@ -109,10 +109,11 @@ class Kingdomino(gym.Env):
             self.first_turn = False
             self._current_player_itr = 0
             self.startTurn()
+        self.current_player_id = self.order[self._current_player_itr]
             
 
     def scores(self):
-        return np.array([p.board.count() for p in self.players])
+        return np.array([board.count() for board in self.boards])
         
     
     # Automatically called when current_player_itr is set to 0
@@ -140,22 +141,20 @@ class Kingdomino(gym.Env):
     # player_id         : player who wants to play
     # tile_id           : id of tile he wants to pick if there is still tiles to pick
     # position_inversed : tuple (TilePosition, bool) if there is a tile the player has
-    def step(self, player, action):
-        Printer.print(player, "'s turn")
+    def step(self, action):
+        Printer.print(self.current_player_id, "'s turn")
         Printer.print('Action :', action)
-        if player.id != self.order[self.current_player_itr]:
-            raise GameException(f'Error : Player {self.order[self.current_player_itr]} should play, not {player} !')
-        
+
         tile_id, position = action
         
         # Select tile
         if not self.last_turn:
-            self.pickTile(player, tile_id)
+            self.pickTile(tile_id)
 
         if not self.first_turn:
             if not (position == Kingdomino.discard_tile).all():
-                self.placeTile(player, position, self.previous_tiles[player.id])
-                Printer.print(player.board)
+                self.placeTile(position, self.previous_tiles[self.current_player_id])
+                Printer.print(self.boards[self.current_player_id])
             else:
                 Printer.print('Tile discarded')
         self.current_player_itr += 1
@@ -165,25 +164,25 @@ class Kingdomino(gym.Env):
         
         state = self._get_obs()
         
-        return state, done
+        return state, 0, done, {}
         
     # Board : 9*9 tile type + 9*9 crowns
     # Current/Previous tiles : 2 tile type, 2 crowns, 1 which player has chosen it, 1 value of tile
     # Previous tiles : 2 tile type, 2 crowns
     # TODO : ORDER PLAYERS NICELY !!!! (player asking first)
-    def _get_obs(self, player_id):
+    def _get_obs(self):
         obs = {'Boards'         : np.zeros([self.n_players,2,9,9]),
                'Current tiles'  : np.zeros([self.n_players,TILE_SIZE+1]),
                'Previous tiles' : np.zeros([self.n_players,TILE_SIZE+1])}
         for i in self.order:     
-            obs['Boards'][i,0] = self.players[i].board.board
-            obs['Boards'][i,1] = self.players[i].board.crown
+            obs['Boards'][i,0] = self.boards[i].board
+            obs['Boards'][i,1] = self.boards[i].crown
         # for i,player in enumerate(self.players):
         #     obs['Boards'][i,0] = player.board.board
         #     obs['Boards'][i,1] = player.board.crown
-        obs['Boards'][[0,player_id]] = obs['Boards'][[player_id,0]]
+        obs['Boards'][[0,self.current_player_id]] = obs['Boards'][[self.current_player_id,0]]
         obs['Previous tiles'] = self.previous_tiles
-        obs['Previous tiles'][[0,player_id]] = obs['Previous tiles'][[player_id,0]]
+        obs['Previous tiles'][[0,self.current_player_id]] = obs['Previous tiles'][[self.current_player_id,0]]
 
         obs['Current tiles'][:,:-1] = self.current_tiles
         obs['Current tiles'][:,-1] = self.current_tiles_player
@@ -191,14 +190,12 @@ class Kingdomino(gym.Env):
         return obs
         
 
-    def pickTile(self, player, tile_id):
-        tile = self.current_tiles[tile_id]
-
+    def pickTile(self, tile_id):
         if self.current_tiles_player[tile_id] != -1:
-            raise GameException(f'Error : {player} cannot choose tile {player.current_tile} because it is already selected !')
+            raise GameException(f'Error : Player {self.current_player_id} cannot choose tile {tile_id} because it is already selected !')
         
-        self.new_order[tile_id] = player.id
-        self.current_tiles_player[tile_id] = player.id
+        self.new_order[tile_id] = self.current_player_id
+        self.current_tiles_player[tile_id] = self.current_player_id
     
     
     def selectTileRandom(self):
@@ -209,18 +206,18 @@ class Kingdomino(gym.Env):
         return tile_id
         
 
-    def placeTile(self, player, position, tile):
-        self.checkPlacementValid(player, position, tile)     
-        player.board.placeTile(position, tile)
+    def placeTile(self, position, tile):
+        self.checkPlacementValid(position, tile)     
+        self.boards[self.current_player_id].placeTile(position, tile)
 
     
-    def selectTilePositionRandom(self, player):
+    def selectTilePositionRandom(self):
         if self.first_turn:
             return None
         
-        tile = self.previous_tiles[player.id]
+        tile = self.previous_tiles[self.current_player_id]
         
-        positions = self.getPossiblePositions(player, tile)
+        positions = self.getPossiblePositions(tile)
         if positions:
             position = random.sample(positions, k=1)[0]
         else:
@@ -236,24 +233,25 @@ class Kingdomino(gym.Env):
     # position : TilePosition
     # inversed false : position.p1 corresponds to first tile
     # TODO : perhaps speed this up with position as a numpy array
-    def checkPlacementValid(self, player, position, tile):           
+    def checkPlacementValid(self, position, tile): 
+        board = self.boards[self.current_player_id] 
         # Check five square and no overlapping
         for point in position:
-            if not player.board.isInFiveSquare(point):
+            if not board.isInFiveSquare(point):
                 raise GameException(f'{point} is not in a five square.')
-            if player.board.getBoard(point[0], point[1]) != -1 or \
-                player.board.getBoard(point[0], point[1]) == -2:
+            if board.getBoard(point[0], point[1]) != -1 or \
+                board.getBoard(point[0], point[1]) == -2:
                 raise GameException(f'Overlapping at point {point}.')
         
         # Check that at least one position is near castle or near same type of env
         for i,point in enumerate(position):
-            if self.isNeighbourToCastleOrSame(player, point, tile[i]):
+            if self.isNeighbourToCastleOrSame(point, tile[i]):
                 return
         raise GameException('Not next to castle or same type of env.')    
     
     
     castle_neighbors = np.array([(3,4),(4,3),(4,5),(5,4)])
-    def isNeighbourToCastleOrSame(self, player, point, tile_type):
+    def isNeighbourToCastleOrSame(self, point, tile_type):
         # Check if castle next
         if np.any(np.all(point == Kingdomino.castle_neighbors, axis=1)):
             return True
@@ -265,24 +263,25 @@ class Kingdomino(gym.Env):
                 if i != point[0] and j != point[1]:
                     continue
 
-                if player.board.getBoard(i,j) == tile_type:
+                if self.boards[self.current_player_id].getBoard(i,j) == tile_type:
                     return True
                 
         return False
     
     
-    def getPossiblePositions(self, player, tile, every_pos=False):
+    def getPossiblePositions(self, tile, every_pos=False):
+        board = self.boards[self.current_player_id]
         available_pos = []
         for i in range(9):
             for j in range(9):
-                if player.board.getBoard(i, j) == -1:
+                if board.getBoard(i, j) == -1:
                     for _i in range(i-1,i+2):
                         for _j in range(j-1,j+2):
-                            if (_i != i and _j != j) or (_i==i and _j==j) or player.board.getBoard(_i, _j) != -1:
+                            if (_i != i and _j != j) or (_i==i and _j==j) or board.getBoard(_i, _j) != -1:
                                 continue
                             try:
                                 pos = np.array([[i,j],[_i,_j]])
-                                self.checkPlacementValid(player, pos, tile)
+                                self.checkPlacementValid(pos, tile)
                                 available_pos.append(pos)
                                 if not every_pos:
                                     return available_pos
@@ -290,7 +289,7 @@ class Kingdomino(gym.Env):
                                 pass
                             try:
                                 pos = np.array([[_i,_j],[i,j]])
-                                self.checkPlacementValid(player, pos, tile)
+                                self.checkPlacementValid(pos, tile)
                                 available_pos.append(pos)
                                 if not every_pos:
                                     return available_pos
@@ -298,7 +297,7 @@ class Kingdomino(gym.Env):
                                 pass
         return available_pos
     
-    def isTilePlaceable(self, player, tile):
-        return self.getPossiblePositions(player, tile, every_pos=False)
+    def isTilePlaceable(self, tile):
+        return self.getPossiblePositions(tile, every_pos=False)
                             
 

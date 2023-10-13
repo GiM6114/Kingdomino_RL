@@ -15,26 +15,8 @@ class Pipeline:
         self.player = player
         self.env = env
 
-class Player:
-    def __init__(self, _id):
-        self.id = _id
-        self.reset()
-        
-    def reset(self):
-        self.board = Board()
 
-    
-    def __str__(self):
-        return 'Player ' + str(self.id)
-    
-    def give_scores(self, scores):
-        pass
-    
-    def action(self, state):
-        pass
-
-
-class HumanPlayer(Player):      
+class HumanPlayer:      
     def action(self, state):
         tile_id = input("Which tile do you choose ?")
         x1 = int(input("x1 ? "))
@@ -44,24 +26,22 @@ class HumanPlayer(Player):
         return tile_id, (x1,y1,x2,y2)
 
 
-class RandomPlayer(Player):
-    def action(self, state):
-        return (self.kingdomino.selectTileRandom(),
-                self.kingdomino.selectTilePositionRandom(self))
+class RandomPlayer:
+    def action(self, state, kingdomino):
+        return (kingdomino.selectTileRandom(),
+                kingdomino.selectTilePositionRandom())
 
 
-class PlayerAC(Player):
+class PlayerAC:
     
-    def __init__(self, env, gamma, lr_a, lr_c,
+    def __init__(self, n_players, gamma, lr_a, lr_c,
                  coordinate_std, _id):
-        
-        super().__init__(_id)
         
         self.gamma = gamma
         
         self.shared_rep_size = 200
         self.shared = Shared(
-            env.n_players, 
+            n_players, 
             board_rep_size=100,
             shared_rep_size=self.shared_rep_size)
         self.actor = NeuralNetwork(
