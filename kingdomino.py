@@ -16,8 +16,6 @@ class GameException(Exception):
     def __init__(self, msg):
         self.msg = msg
 
-
-
 class TileDeck:      
     def __init__(self):
         self.tile_data = GET_TILE_DATA() # array of tiles
@@ -65,17 +63,18 @@ class Kingdomino(gym.Env):
             self.n_players = n_players
         self.observation_space = spaces.Dict(
             {
-                'Boards': spaces.Box(low=-2, high=N_TILE_TYPES-1, shape=(self.n_players, 2, 9, 9), dtype=int),
-                'Previous tiles': spaces.Box(low=-2, high=N_TILE_TYPES-1, shape=(self.n_players, 5), dtype=int),
-                'Current tiles': spaces.Box(low=-2, high=N_TILE_TYPES-1, shape=(self.n_players, 6), dtype=int)
+                'Boards': spaces.Box(low=-2, high=N_TILE_TYPES-1, shape=(self.n_players, 2, 9, 9), dtype=float),
+                'Previous tiles': spaces.Box(low=0, high=100, shape=(self.n_players, TILE_SIZE), dtype=float),
+                'Current tiles': spaces.Box(low=0, high=100, shape=(self.n_players, TILE_SIZE+1), dtype=float)
             }
         )
-        self.action_space = spaces.Dict(
-            {
-                'Position': spaces.Box(low=-9, high=9, shape=(2,), dtype=int),
-                'Selected tile': spaces.Box(low=0, high=self.n_players-1, shape=(1,), dtype=int) 
-            }
-        )
+        # self.action_space = spaces.Dict(
+        #     {
+        #         'Position': spaces.Box(low=0, high=9, shape=(2,), dtype=int),
+        #         'Selected tile': spaces.Box(low=0, high=self.n_players-1, shape=(1,), dtype=int) 
+        #     }
+        # )
+        self.action_space = spaces.Box(low=0, high=9, shape=(3,), dtype=float)
         self.render_mode = render_mode
         self.window = None
         self.clock = None
@@ -96,7 +95,7 @@ class Kingdomino(gym.Env):
             self.boards.append(Board())
         self.current_player_itr = 0
         self.startTurn()
-        return self._get_obs()
+        return self._get_obs(), {}
     
     
     @property
@@ -142,58 +141,70 @@ class Kingdomino(gym.Env):
     # tile_id           : id of tile he wants to pick if there is still tiles to pick
     # position_inversed : tuple (TilePosition, bool) if there is a tile the player has
     def step(self, action):
-        Printer.print(self.current_player_id, "'s turn")
-        Printer.print('Action :', action)
+        try:
+            Printer.print(self.current_player_id, "'s turn")
+            Printer.print('Action :', action)
 
-        tile_id, position = action
-        
-        # Select tile
-        if not self.last_turn:
-            self.pickTile(tile_id)
-
-        if not self.first_turn:
-            if not (position == Kingdomino.discard_tile).all():
-                self.placeTile(position, self.previous_tiles[self.current_player_id])
-                Printer.print(self.boards[self.current_player_id])
-            else:
-                Printer.print('Tile discarded')
-        self.current_player_itr += 1
+            position = action[:2].astype(int)
+            tile_id = action[-1].astype(int)
             
-        done = self.last_turn and \
-            self.current_player_itr == self.n_players-1
-        
-        state = self._get_obs()
-        
-        return state, 0, done, {}
+            truncated = False
+            try:
+                # Select tile
+                if not self.last_turn:
+                    self.pickTile(tile_id)
+                print('1')
+
+                if not self.first_turn:
+                    if not (position == Kingdomino.discard_tile).all():
+                        self.placeTile(position, self.previous_tiles[self.current_player_id])
+                        Printer.print(self.boards[self.current_player_id])
+                    else:
+                        Printer.print('Tile discarded')
+                self.current_player_itr += 1
+                    
+                terminated = self.last_turn and \
+                    self.current_player_itr == self.n_players-1
+                
+                state = self._get_obs()
+            except GameException as e:
+                Printer.print(e.msg)
+                truncated = True
+        except Exception as e:
+            print(e.msg)
+            
+        return state, 0, terminated, truncated, {}
         
     # Board : 9*9 tile type + 9*9 crowns
     # Current/Previous tiles : 2 tile type, 2 crowns, 1 which player has chosen it, 1 value of tile
     # Previous tiles : 2 tile type, 2 crowns
-    # TODO : ORDER PLAYERS NICELY !!!! (player asking first)
+    # TODO : ORDER PLAYERS NICELY !!!! (player playing first)
     def _get_obs(self):
         obs = {'Boards'         : np.zeros([self.n_players,2,9,9]),
                'Current tiles'  : np.zeros([self.n_players,TILE_SIZE+1]),
-               'Previous tiles' : np.zeros([self.n_players,TILE_SIZE+1])}
+               'Previous tiles' : np.zeros([self.n_players,TILE_SIZE])}
         for i in self.order:     
             obs['Boards'][i,0] = self.boards[i].board
             obs['Boards'][i,1] = self.boards[i].crown
-        # for i,player in enumerate(self.players):
-        #     obs['Boards'][i,0] = player.board.board
-        #     obs['Boards'][i,1] = player.board.crown
+
         obs['Boards'][[0,self.current_player_id]] = obs['Boards'][[self.current_player_id,0]]
         obs['Previous tiles'] = self.previous_tiles
-        obs['Previous tiles'][[0,self.current_player_id]] = obs['Previous tiles'][[self.current_player_id,0]]
-
         obs['Current tiles'][:,:-1] = self.current_tiles
-        obs['Current tiles'][:,-1] = self.current_tiles_player
+        obs['Current tiles'][:,-1] = (self.current_tiles_player == -1).astype(float)
+
+        # same order as boards
+        obs['Previous tiles'] = obs['Previous tiles'][self.order]
+        obs['Current tiles'] = obs['Current tiles'][self.order]
+
+        # player as first
+        obs['Previous tiles'][[0,self.current_player_id]] = obs['Previous tiles'][[self.current_player_id,0]]
         
         return obs
         
-
+    # error in there
     def pickTile(self, tile_id):
         if self.current_tiles_player[tile_id] != -1:
             raise GameException(f'Error : Player {self.current_player_id} cannot choose tile {tile_id} because it is already selected !')
-        
         self.new_order[tile_id] = self.current_player_id
         self.current_tiles_player[tile_id] = self.current_player_id
     

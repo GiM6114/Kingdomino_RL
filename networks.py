@@ -25,64 +25,79 @@ class NeuralNetwork(nn.Module):
         for layer in self.layers:
             x = layer(x)
         return x
+    
+class CNN(nn.Module):
+    def __init__(self,
+                 in_channels,
+                 conv_channels, conv_kernel_size, conv_stride, l,
+                 pool_place, pool_kernel_size, pool_stride
+                 ):
+        super(CNN, self).__init__()
+        
+        layers = [nn.Conv2d(
+            in_channels = in_channels,
+            out_channels = conv_channels,
+            kernel_size = conv_kernel_size,
+            stride = conv_stride)
+            ]
+        for i in range(l):
+            layers.append(nn.ReLU())
+            if pool_place[i] != 0:
+                layers.append(nn.MaxPool2d(
+                    kernel_size = pool_kernel_size,
+                    stride = pool_stride))
+        self.layers = nn.ModuleList(layers)
+        
+    def forward(self, x):
+        for layer in self.layers:
+            x = layer(x)
+        return x
 
 class BoardNetwork(nn.Module):
-    def __init__(self, n_inputs, n_outputs):
+    def __init__(self, n_inputs, network_info):
         super(BoardNetwork, self).__init__()
         
-        self.conv1 = nn.Conv2d(in_channels=n_inputs, out_channels=20,
-                               kernel_size=(5,5)) # 1620
-        self.relu1 = nn.ReLU()
-        self.maxpool1 = nn.MaxPool2d(kernel_size=(2,2), stride=(1,1)) # 405
-
-        self.conv2 = nn.Conv2d(in_channels=20, out_channels=50,
-                               kernel_size=(5,5))
-        self.relu2 = nn.ReLU()
-        self.maxpool2 = nn.MaxPool2d(kernel_size=(2,2), stride=(1,1))
-
-        self.fc1 = nn.Linear(in_features=450, out_features=500) # not 100    
-        self.relu3 = nn.ReLU()
+        self.cnn = CNN(
+            in_channels = n_inputs,
+            conv_channels = network_info.conv_channels,
+            conv_kernel_size = network_info.conv_kernel_size,
+            conv_stride = network_info.conv_stride,
+            l = network_info.conv_l,
+            pool_place = network_info.pool_place,
+            pool_kernel_size = network_info.pool_kernel_size,
+            pool_stride = network_info.pool_stride
+            )
+        self.fc = NeuralNetwork(
+            input_size = 3200, # modify according to error...or compute conv accordingly
+            output_size = network_info.board_rep_size,
+            n = network_info.board_fc_n,
+            l = network_info.board_fc_l)
         
-        self.fc2 = nn.Linear(in_features=500, out_features=n_outputs)    
-        self.relu4 = nn.ReLU()
         
     # x : [batch_size, 2, 9, 9]
     def forward(self, x):
         x = F.pad(x, (2,2,2,2), 'constant', -1) # pad each dimensions
-        
-        x = self.conv1(x)
-        x = self.relu1(x)
-        x = self.maxpool1(x)
-        
-        x = self.conv2(x)
-        x = self.relu2(x)
-        x = self.maxpool2(x)
-        
+        x = self.cnn(x)
         x = torch.flatten(x, 1)
-        x = self.fc1(x)
-        x = self.relu3(x)
-        
-        x = self.fc2(x)
-        x = self.relu4(x)
-        
+        x = self.fc(x)
         return x
 
 # /        Board network        /
 # Player board -> convo -> fc ->  fc -> Player specific vector
 #               Previous tile ->
 class PlayerNetwork(nn.Module):
-    def __init__(self, board_rep_size, player_rep_size):
+    def __init__(self, network_info):
         super(PlayerNetwork, self).__init__()
         
         self.board_network = BoardNetwork(
             n_inputs=N_TILE_TYPES+1,
-            n_outputs=board_rep_size)
+            network_info=network_info)
         
         self.join_info_network = NeuralNetwork(
-            input_size=board_rep_size + 2*TILE_ENCODING_SIZE,
-            output_size=player_rep_size, 
-            l=4,
-            n=player_rep_size)
+            input_size = network_info.board_rep_size + TILE_ENCODING_SIZE,
+            output_size = network_info.player_rep_size, 
+            l = network_info.board_prev_tile_fc_l,
+            n = network_info.player_rep_size)
 
     def forward(self, board, previous_tile):
         board_rep = self.board_network(board)
@@ -92,35 +107,31 @@ class PlayerNetwork(nn.Module):
         
 
 class Shared(nn.Module):
-    def __init__(self, batch_size, n_players, board_rep_size, player_rep_size, shared_rep_size):
+    def __init__(self, n_players, network_info):
         super(Shared, self).__init__()
-        self.batch_size = batch_size
         self.n_players = n_players
-        self.board_rep_size = board_rep_size
-        self.player_rep_size = player_rep_size
-        self.shared_rep_size = shared_rep_size
+        self.network_info = network_info
         
-        self.player_network = PlayerNetwork(
-            board_rep_size=self.board_rep_size,
-            player_rep_size=self.player_rep_size)
+        self.player_network = PlayerNetwork(network_info)
         
-        self.shared_input_size = self.player_rep_size * self.n_players \
-            + TILE_ENCODING_SIZE
-        
+        shared_input_size = \
+            (self.network_info.player_rep_size + TILE_ENCODING_SIZE+1) * self.n_players
+            
         self.shared_network = NeuralNetwork(
-            input_size=self.shared_input_size,
-            output_size=self.shared_rep_size,
-            l=4, 
-            n=200)
+            input_size=shared_input_size,
+            output_size=self.network_info.shared_rep_size,
+            l=self.network_info.shared_l, 
+            n=self.network_info.shared_n)
 
     # x['Boards'] : (batch_size, n_players, 2, 9, 9)
     # Returns : (batch_size, n_players, N_TILE_TYPES+2, 9, 9)
     def boards2onehot(self, x):
+        batch_size = x['Boards'].size()[0]
         board_size = x['Boards'].size()[-1]
         ## BOARDS
         # (N_TILE_TYPES) + 2 : crown + empty tiles
         boards_one_hot = torch.zeros([
-            self.batch_size,
+            batch_size,
             self.n_players,
             N_TILE_TYPES+2,
             board_size,board_size])
@@ -131,9 +142,9 @@ class Shared(nn.Module):
 
     # x['Previous tiles'] : (batch_size, n_players, TILE_SIZE (5))
     def tile2onehot(self, tiles):
-        ## PREV TILES
+        batch_size = tiles.size()[0]
         prev_tiles_info = torch.zeros([
-            self.batch_size,
+            batch_size,
             self.n_players,
             TILE_ENCODING_SIZE])
         prev_tiles_info[:,:,-1] = tiles[:,:,-1] # Value
@@ -146,8 +157,9 @@ class Shared(nn.Module):
     # Assumes the observation at 0 is current player
     # Additional information : taken or not, and by whom
     def current_tiles_vector(self, x):
+        batch_size = x['Boards'].size()[0]
         current_tiles_info = torch.zeros([
-            self.batch_size,
+            batch_size,
             self.n_players,
             TILE_ENCODING_SIZE+1])
         current_tiles_info[:,:,:-1] = self.tile2onehot(x['Current tiles'][:,:,:-1])
@@ -156,46 +168,32 @@ class Shared(nn.Module):
     
     # Assumes the observation at 0 is current player
     def players_vector(self, x):
-        boards_one_hot = self.boards2onehot(x)
-        previous_tile_one_hot = self.tile2onehot(x['Previous tiles'])
-        
+        with torch.no_grad():
+            batch_size = x['Boards'].size()[0]
+            boards_one_hot = self.boards2onehot(x)
+            previous_tile_one_hot = self.tile2onehot(x['Previous tiles'])
+            
         players_output = torch.zeros([
-            self.batch_size,
+            batch_size,
             self.n_players,
-            self.board_rep_size])
-        # TODO : parallelize this
-        for i in range(self.n_players):
-            players_output[:,i] = self.player_network(
-                board=boards_one_hot[:,i],
-                previous_tile=previous_tile_one_hot[:,i])
-        return players_output.reshape(self.batch_size, -1)
-    
+            self.network_info.player_rep_size])
+        # TODO : parallelize this ?
+        # for i in range(self.n_players):
+        #     players_output[:,i] = self.player_network(
+        #         board=boards_one_hot[:,i],
+        #         previous_tile=previous_tile_one_hot[:,i])
+        return players_output.reshape(batch_size, -1)
 
-    
-
-
-    
-    # def curr_tiles_vector(self, player_id, x):
-    #     curr_tiles_info = torch.zeros([self.n_players, 2*(N_TILE_TYPES+2+1)+self.n_players-1])
-    #     # + n_players : corresponds to one_hot_encoded player_id
-    #     curr_tiles_info[:,:N_TILE_TYPES] = F.one_hot(x['Current tiles'][:,0], num_classes=N_TILE_TYPES)
-    #     curr_tiles_info[:,N_TILE_TYPES:2*(N_TILE_TYPES+2)] = F.one_hot(x['Current tiles'][:,1], num_classes=N_TILE_TYPES)
-    #     curr_tiles_info[:,2*N_TILE_TYPES] = x['Current tiles'][:,2]
-    #     curr_tiles_info[:,2*N_TILE_TYPES+1] = x['Current tiles'][:,3]
-    #     curr_tiles_info[:,2*(N_TILE_TYPES+2)+1:2*(N_TILE_TYPES+2)+1+self.n_players-1] = \
-    #         F.one_hot(x['Current tiles'][:,5], num_classes=self.n_players-1) \
-    #             * (x['Current tiles'][:,5] != -1)
-    #     return curr_tiles_info.flatten()
-
-    # equivalence of players not taken into account (should share weights) 
-    def forward(self, player_id, x):
-        print(x)
-        for key in x:
-            x[key] = torch.tensor(x[key], dtype=torch.int64)
-        players_vector = self.players_vector(player_id, x).reshape(self.batch_size, -1)
-        current_tiles_vector = self.current_tiles_vector(player_id, x)
-        
-        x = torch.cat([players_vector, current_tiles_vector], dim=1)
+    # equivalence of players not taken into account (ideally should share weights) 
+    def forward(self, x):
+        with torch.no_grad():
+            for key in x:
+                x[key] = torch.tensor(x[key], dtype=torch.int64)
+            batch_size = x['Boards'].size()[0]
+        players_vector = self.players_vector(x).reshape(batch_size, -1)
+        with torch.no_grad():
+            current_tiles_vector = self.current_tiles_vector(x)
+        x = torch.cat([players_vector, current_tiles_vector.reshape(batch_size,-1)], dim=1)
         x = self.shared_network(x)
         return x
 
