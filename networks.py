@@ -186,10 +186,7 @@ class Shared(nn.Module):
 
     # equivalence of players not taken into account (ideally should share weights) 
     def forward(self, x):
-        with torch.no_grad():
-            for key in x:
-                x[key] = torch.tensor(x[key], dtype=torch.int64)
-            batch_size = x['Boards'].size()[0]
+        batch_size = x['Boards'].size()[0]
         players_vector = self.players_vector(x).reshape(batch_size, -1)
         with torch.no_grad():
             current_tiles_vector = self.current_tiles_vector(x)

@@ -2,13 +2,13 @@ import numpy as np
 import gym
 
 from kingdomino import Kingdomino
-from agent import RandomPlayer, PlayerAC, NetworksInfo
+import agent
 from printer import Printer
 
-BATCH_SIZE = 3
+BATCH_SIZE = 1
 N_PLAYERS = 2
 
-network_info = NetworksInfo(
+network_info = agent.NetworksInfo(
     in_channels=50, 
     output_size=50, 
     conv_channels=50, 
@@ -32,7 +32,7 @@ network_info = NetworksInfo(
     critic_n=240)
 
 if __name__ == '__main__':
-    agent = PlayerAC(
+    player = agent.PlayerAC_shared_critic_trained(
         batch_size = BATCH_SIZE,
         n_players = N_PLAYERS,
         gamma = 0.99,
@@ -42,29 +42,33 @@ if __name__ == '__main__':
         network_info = network_info
     )
     
-    # env = gym.make('KingDomino-v0', n_players=2)
-    # Printer.activated = True
-    # done = False
-    # state,_ = env.reset()
-    # for e in range(100):
-    #     while True:
-    #         action = agent.action(state)
-    #         print(action)
-    #         state,reward,terminated,truncated,info = env.step(np.array(action))
-    #         agent.give_reward([reward])
-    #         if terminated or truncated:
-    #             break
-        
-    envs = gym.vector.AsyncVectorEnv([
-        lambda: gym.make("KingDomino-v0", n_players=N_PLAYERS) for i in range(BATCH_SIZE)
-    ])
-    
-    Printer.activated = False
+    env = gym.make('KingDomino-v0', n_players=2)
+    Printer.activated = True
     done = False
-    states,_ = envs.reset()
-    for i in range(500):
-        print('Step', i)
-        actions = agent.action(states)
-        print(actions)
-        states,rewards,terminateds,truncateds,info = envs.step(np.array(actions))
-        agent.give_reward(rewards)
+    state,_ = env.reset()
+    for e in range(100):
+        while True:
+            for key in state:
+                state[key] = np.expand_dims(state[key], axis=0)
+                print(state[key].shape)
+            action = player.action(state)
+            state,reward,terminated,truncated,info = env.step(np.array(action))
+
+            player.give_reward(reward)
+            if terminated or truncated:
+                break
+        
+    # envs = gym.vector.AsyncVectorEnv([
+    #     lambda: gym.make("KingDomino-v0", n_players=N_PLAYERS) for i in range(BATCH_SIZE)
+    # ])
+    
+    # Printer.activated = False
+    # done = False
+    # states,_ = envs.reset()
+    # for i in range(500):
+    #     print('Step', i)
+    #     actions = player.action(states)
+    #     print(actions)
+    #     print(envs.step(np.array(actions)))
+    #     states,rewards,terminateds,truncateds,info = envs.step(np.array(actions))
+    #     player.give_reward(rewards)

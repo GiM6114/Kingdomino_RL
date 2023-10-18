@@ -87,6 +87,7 @@ class Board:
     
     
     def isInFiveSquare(self, point):
+        print('Point :', point)
         return not (self.right_most - point[0] >= 5
                     or self.bottom_most - point[1] >= 5 
                     or point[0] - self.left_most >= 5

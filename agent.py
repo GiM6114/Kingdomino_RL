@@ -58,8 +58,7 @@ NetworksInfo = namedtuple('NetworksInfo',
                            'critic_l',
                            'critic_n'])
 
-class PlayerAC:
-    
+class PlayerAC_base:
     def __init__(self, 
                  batch_size,
                  n_players, 
@@ -78,24 +77,17 @@ class PlayerAC:
             n=network_info.critic_n)
         self.actor = NeuralNetwork(
             input_size=network_info.shared_rep_size, 
-            output_size=2+n_players, 
+            # 2 continuous outputs for first tile
+            # 4 other possible positions (n,w,s,e)
+            # n_players : which tile to pick
+            output_size=2+4+n_players, 
             # coordinates to place previous tile + which tile to take
             l=network_info.actor_l, 
             n=network_info.actor_n)
    
         self.coordinates_cov = torch.eye(2).repeat(batch_size,1,1) * coordinate_std**2
-        
-        self.optimizer_c = torch.optim.AdamW(
-            list(self.shared.parameters()) + list(self.critic.parameters()),
-            amsgrad=True,
-            lr=lr_c)
         self.criterion_c = nn.SmoothL1Loss()
-        self.optimizer_a = torch.optim.AdamW(
-            list(self.shared.parameters()) + list(self.actor.parameters()),
-            amsgrad=True,
-            lr=lr_a)
-        
-        self.reset()
+        self.reset()    
         
     def reset(self):
         self.rewards = None
@@ -104,18 +96,187 @@ class PlayerAC:
         self.coordinates_distributions = None
         self.coordinates_chosen = None
         self.values = None
+        self.first_step = True
+        
+    def give_reward(self, rewards):
+        self.rewards = torch.tensor(rewards)
+ 
+class PlayerAC_shared_critic_trained(PlayerAC_base):
+    
+    def __init__(self, 
+                 batch_size,
+                 n_players, 
+                 gamma, lr_a, lr_c, coordinate_std,
+                 network_info):
+        
+        super().__init__(
+            batch_size, 
+            n_players, 
+            gamma, lr_a, lr_c, coordinate_std,
+            network_info)
+        self.optimizer_c = torch.optim.AdamW(
+            list(self.shared.parameters()) + list(self.critic.parameters()),
+            amsgrad=True,
+            lr=lr_c)
+        self.optimizer_a = torch.optim.AdamW(
+            self.actor.parameters(),
+            amsgrad=True,
+            lr=lr_a)
+        
+    def action(self, states):
+        with torch.no_grad():
+            for key in states:
+                states[key] = torch.tensor(states[key], dtype=torch.int64)
+          
+        shared_rep_c = self.shared(states)
+        if states['Boards'] is None:
+            self.values = 
+        self.values = self.critic(shared_rep_c).squeeze()
+
+        if not self.first_step:
+            
+            with torch.no_grad():
+                self.prev_values = self.values.clone()
+            targets = self.rewards + self.gamma*self.values
+            # Critic update
+            loss_c = self.criterion_c(
+                targets,
+                self.prev_values)
+            self.optimizer_c.zero_grad()
+            loss_c.backward()
+            self.optimizer_c.step()
+
+            with torch.no_grad():
+                loss_c_a = loss_c.clone()
+            # Actor update
+            # product of proba as tile choice and coordinates chosen for previous tiles
+            # assumeed independant (they are not)
+            loss_a = torch.mean((-self.coordinates_distributions.log_prob(self.coordinates_chosen) \
+                      -self.tile_choice_distributions.log_prob(self.tile_chosen) \
+                      -self.direction_output_distribution.log_prob(self.direction_chosen))) * loss_c_a
+            self.optimizer_a.zero_grad()
+            loss_a.backward()
+            self.optimizer_a.step()
+        self.first_step = False
+        
+        with torch.no_grad():
+            shared_rep_a = shared_rep_c.clone()
+        action_outputs = self.actor(shared_rep_a)
+        coordinates_outputs = action_outputs[:,:2]
+        self.coordinates_distributions = distributions.MultivariateNormal(coordinates_outputs, self.coordinates_cov)
+        self.coordinates_chosen = torch.round(self.coordinates_distributions.sample())
+        direction_output_distribution = F.softmax(action_outputs[:,2:6])
+        self.direction_output_distribution = distributions.Multinomial(total_count=1, probs=direction_output_distribution)
+        self.direction_chosen = self.direction_output_distribution.sample()
+        tile_output_distribution = F.softmax(action_outputs[:,2:], dim=1)
+        self.tile_choice_distributions = distributions.Multinomial(total_count=1, probs=tile_output_distribution)
+        self.tile_chosen = self.tile_choice_distributions.sample()
+        
+        action = torch.column_stack((
+            self.coordinates_chosen, 
+            self.direction_chosen.nonzero()[:,1], 
+            self.tile_chosen.nonzero()[:,1]))
+        return action
+
+
+class PlayerAC_shared_actor_trained(PlayerAC_base):
+    
+    def __init__(self, 
+                 batch_size,
+                 n_players, 
+                 gamma, lr_a, lr_c, coordinate_std,
+                 network_info):
+        
+        super().__init__(
+            batch_size, 
+            n_players, 
+            gamma, lr_a, lr_c, coordinate_std,
+            network_info)
+        self.optimizer_c = torch.optim.AdamW(
+            self.critic.parameters(),
+            amsgrad=True,
+            lr=lr_c)
+        self.optimizer_a = torch.optim.AdamW(
+            list(self.shared.parameters()) + list(self.actor.parameters()),
+            amsgrad=True,
+            lr=lr_a)
+        
+    def action(self, states):
+        with torch.no_grad():
+            for key in states:
+                states[key] = torch.tensor(states[key], dtype=torch.int64)
+            
+        shared_rep_a = self.shared(states)
+        action_outputs = self.actor(shared_rep_a)
+        coordinates_outputs = action_outputs[:,:2]
+        coordinates_distributions = distributions.MultivariateNormal(coordinates_outputs, self.coordinates_cov)
+        coordinates_chosen = torch.round(coordinates_distributions.sample())
+        tile_output_distribution = F.softmax(action_outputs[:,2:], dim=1)
+        tile_choice_distributions = distributions.Multinomial(total_count=1, probs=tile_output_distribution)
+        tile_chosen = tile_choice_distributions.sample()
+        action = torch.column_stack((coordinates_chosen,tile_chosen.nonzero()[:,1]))
+        
+        self.prev_values = self.values
+        with torch.no_grad():
+            shared_rep_c = shared_rep_a.clone()
+        self.values = self.critic(shared_rep_c).squeeze()
+
+        if self.prev_values is not None:
+            targets = self.rewards + self.gamma*self.values
+            # Critic update
+            loss_c = self.criterion_c(
+                targets,
+                self.prev_values)
+            self.optimizer_c.zero_grad()
+            loss_c.backward()
+            self.optimizer_c.step()
+
+            # Actor update
+            # product of proba as tile choice and coordinates chosen for previous tiles
+            # assumeed independant (they are not)
+            loss_a = torch.mean((-self.coordinates_distributions.log_prob(self.coordinates_chosen) \
+                      -self.tile_choice_distributions.log_prob(self.tile_chosen))) * loss_c
+            self.optimizer_a.zero_grad()
+            loss_a.backward()
+            self.optimizer_a.step()
+            
+        self.coordinates_chosen = coordinates_chosen
+        self.tile_chosen = tile_chosen
+        self.coordinates_distributions = coordinates_distributions
+        self.tile_choice_distributions = tile_choice_distributions
+        
+        with torch.no_grad():
+            shared_rep_a = shared_rep_c.clone()
+
+        return action
+
+
+class PlayerAC(PlayerAC_base):
+    
+    def __init__(self, 
+                 batch_size,
+                 n_players, 
+                 gamma, lr_a, lr_c, coordinate_std,
+                 network_info):
+        
+        super().__init__(
+            batch_size, 
+            n_players, 
+            gamma, lr_a, lr_c, coordinate_std,
+            network_info)
+        params_opt_c = list(self.shared.parameters()) + list(self.critic.parameters())
+        params_opt_a = list(self.shared.parameters()) + list(self.actor.parameters())
+
     
     def action(self, states):
-        shared_rep = self.shared(states)
-
-        print('Version :', shared_rep._version)
+        with torch.no_grad():
+            for key in states:
+                states[key] = torch.tensor(states[key], dtype=torch.int64)
+            
+        shared_rep_c = self.shared(states)
         
-        # Here we have the previous state value, action, reward and state is the next state
-        # -> Update
         self.prev_values = self.values
-        self.values = self.critic(shared_rep).squeeze()
-        graph = make_dot(self.critic(shared_rep), params=dict(self.shared.named_parameters()) | dict(self.critic.named_parameters()))
-        display(graph)
+        self.values = self.critic(shared_rep_c).squeeze()
 
         if self.prev_values is not None:
             targets = self.rewards + self.gamma*self.values
@@ -126,24 +287,19 @@ class PlayerAC:
             self.optimizer_c.zero_grad()
             loss_c.backward(retain_graph=True)
             self.optimizer_c.step()
-            print('Version :', shared_rep._version)
-            print('Version :', loss_c._version)
 
             # Actor update
             # product of proba as tile choice and coordinates chosen for previous tiles
             # assumeed independant (they are not)
             loss_a = torch.mean((-self.coordinates_distributions.log_prob(self.coordinates_chosen) \
-                     -self.tile_choice_distributions.log_prob(self.tile_chosen))) * loss_c
-            print('Version :', shared_rep._version)
-            print('Version :', loss_a._version)
+                      -self.tile_choice_distributions.log_prob(self.tile_chosen))) * loss_c
             self.optimizer_a.zero_grad()
             loss_a.backward()
             self.optimizer_a.step()
         
-        action_outputs = self.actor(shared_rep)
-        graph = make_dot(self.actor(shared_rep), params=dict(self.shared.named_parameters()) | dict(self.actor.named_parameters()))
-        display(graph)
-        
+        shared_rep_a = self.shared(states)
+        action_outputs = self.actor(shared_rep_a)
+
         coordinates_outputs = action_outputs[:,:2]
         self.coordinates_distributions = distributions.MultivariateNormal(coordinates_outputs, self.coordinates_cov)
         self.coordinates_chosen = torch.round(self.coordinates_distributions.sample())
@@ -158,6 +314,5 @@ class PlayerAC:
         return action
             
 
-    def give_reward(self, rewards):
-        self.rewards = torch.tensor(rewards)
+
 

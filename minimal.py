@@ -126,7 +126,7 @@ for i in range(5000):
     loss_2.backward()
     optimizer_2.step()
     
-#%% FIX #2 STILL LOOKING...
+#%% FIX #2 SIMPLY RECOMPUTE SHARED ??? HOW DID I NOT SEE THAT EARLIER
 
 X = torch.rand(size=(3,2,2))
 y = (X.transpose(1,2) @ torch.tensor([2.,1.])).sum(dim=1)
@@ -142,7 +142,8 @@ optimizer_1 = torch.optim.AdamW(
     list(shared.parameters()) + list(model_1.parameters()),
     amsgrad=True,
     lr=0.01)
-optimizer_2 = torch.optim.AdamW(model_2.parameters(),
+optimizer_2 = torch.optim.AdamW(
+    list(shared.parameters()) + list(model_2.parameters()),
     amsgrad=True,
     lr=0.01)
 
@@ -156,7 +157,7 @@ for i in range(5000):
     loss_1.backward(retain_graph=True)
     optimizer_1.step()
     
-    y_hat_shared_2 = y_hat_shared_1.clone()
+    y_hat_shared_2 = shared(X)
     y_hat_2 = model_2(y_hat_shared_2).squeeze()
     loss_2 = loss_fn_2(y_2, y_hat_2)
     optimizer_2.zero_grad()

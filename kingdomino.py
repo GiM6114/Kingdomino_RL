@@ -53,6 +53,10 @@ register(
 class Kingdomino(gym.Env):
     
     discard_tile = np.array([-1,-1])
+    direction = {0:np.array([1,0]),
+                 1:np.array([0,1]),
+                 2:np.array([-1,0]),
+                 3:np.array([0,-1])}
     
     def __init__(self, n_players=None, players=None, render_mode=None):
         self.tile_deck = TileDeck()
@@ -141,37 +145,40 @@ class Kingdomino(gym.Env):
     # tile_id           : id of tile he wants to pick if there is still tiles to pick
     # position_inversed : tuple (TilePosition, bool) if there is a tile the player has
     def step(self, action):
+        Printer.print(self.current_player_id, "'s turn")
+        Printer.print('Action :', action)
+
+        action = action.flatten()
+        position = (action[:2] + Kingdomino.direction[action[2]]).astype(int)
+        tile_id = action[-1].astype(int)
+        
+        truncated = False
         try:
-            Printer.print(self.current_player_id, "'s turn")
-            Printer.print('Action :', action)
+            # Select tile
+            print('step -1')
+            if not self.last_turn:
+                self.pickTile(tile_id)
+            print('step 0')
 
-            position = action[:2].astype(int)
-            tile_id = action[-1].astype(int)
-            
-            truncated = False
-            try:
-                # Select tile
-                if not self.last_turn:
-                    self.pickTile(tile_id)
-                print('1')
+            if not self.first_turn:
+                print('step 0.5')
+                if not (position == Kingdomino.discard_tile).all():
+                    print('step 1')
+                    self.placeTile(position, self.previous_tiles[self.current_player_id])
+                    print('step 2')
+                    Printer.print(self.boards[self.current_player_id])
+                else:
+                    Printer.print('Tile discarded')
+            print('step 10')
+            self.current_player_itr += 1
+            print('step 11')
 
-                if not self.first_turn:
-                    if not (position == Kingdomino.discard_tile).all():
-                        self.placeTile(position, self.previous_tiles[self.current_player_id])
-                        Printer.print(self.boards[self.current_player_id])
-                    else:
-                        Printer.print('Tile discarded')
-                self.current_player_itr += 1
-                    
-                terminated = self.last_turn and \
-                    self.current_player_itr == self.n_players-1
-                
-                state = self._get_obs()
-            except GameException as e:
-                Printer.print(e.msg)
-                truncated = True
-        except Exception as e:
-            print(e.msg)
+            terminated = self.last_turn and \
+                self.current_player_itr == self.n_players-1
+            state = self._get_obs()
+            print('step 12')
+        except GameException:
+            return {'Boards':None, 'Current tiles':None,'Previous tiles':None}, -100, False, True, {}
             
         return state, 0, terminated, truncated, {}
         
@@ -203,8 +210,11 @@ class Kingdomino(gym.Env):
         
     # error in there
     def pickTile(self, tile_id):
-        if self.current_tiles_player[tile_id] != -1:
+        Printer.print('Tile id :', tile_id)
+        Printer.print('Current tiles player :', self.current_tiles_player)
+        if 0 > tile_id or tile_id >= self.n_players or self.current_tiles_player[tile_id] != -1:
             raise GameException(f'Error : Player {self.current_player_id} cannot choose tile {tile_id} because it is already selected !')
+        Printer.print('New order :', self.new_order)
         self.new_order[tile_id] = self.current_player_id
         self.current_tiles_player[tile_id] = self.current_player_id
     
@@ -218,9 +228,10 @@ class Kingdomino(gym.Env):
         
 
     def placeTile(self, position, tile):
-        self.checkPlacementValid(position, tile)     
+        self.checkPlacementValid(position, tile)   
+        print('placement valid')
         self.boards[self.current_player_id].placeTile(position, tile)
-
+        print('placed')
     
     def selectTilePositionRandom(self):
         if self.first_turn:
@@ -244,7 +255,8 @@ class Kingdomino(gym.Env):
     # position : TilePosition
     # inversed false : position.p1 corresponds to first tile
     # TODO : perhaps speed this up with position as a numpy array
-    def checkPlacementValid(self, position, tile): 
+    def checkPlacementValid(self, position, tile):
+        print('Position :', position)
         board = self.boards[self.current_player_id] 
         # Check five square and no overlapping
         for point in position:
