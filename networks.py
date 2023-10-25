@@ -107,7 +107,8 @@ class PlayerNetwork(nn.Module):
         
 
 class Shared(nn.Module):
-    def __init__(self, n_players, network_info):
+    def __init__(
+            self, n_players, network_info, output_size):
         super(Shared, self).__init__()
         self.n_players = n_players
         self.network_info = network_info
@@ -119,7 +120,7 @@ class Shared(nn.Module):
             
         self.shared_network = NeuralNetwork(
             input_size=shared_input_size,
-            output_size=self.network_info.shared_rep_size,
+            output_size=output_size,
             l=self.network_info.shared_l, 
             n=self.network_info.shared_n)
 
