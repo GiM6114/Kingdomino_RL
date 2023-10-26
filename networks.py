@@ -6,7 +6,7 @@ import torch
 from setup import N_TILE_TYPES, TILE_SIZE
 
 # 2*N_TILE_TYPES + 2 + 1 : one hot encoded tiles + crowns + value of tile
-TILE_ENCODING_SIZE = 2*N_TILE_TYPES + 2 + 1
+TILE_ENCODING_SIZE = 2*(N_TILE_TYPES+1) + 2 + 1
 
 class NeuralNetwork(nn.Module):
     def __init__(self, input_size, output_size, l, n):
@@ -141,18 +141,18 @@ class Shared(nn.Module):
         boards_one_hot[:,:,-1,:,:] = x['Boards'][:,:,1] # Place crowns at the end
         return boards_one_hot
 
-    # x['Previous tiles'] : (batch_size, n_players, TILE_SIZE (5))
     def tile2onehot(self, tiles):
         batch_size = tiles.size()[0]
-        prev_tiles_info = torch.zeros([
+        tiles_info = torch.zeros([
             batch_size,
             self.n_players,
             TILE_ENCODING_SIZE])
-        prev_tiles_info[:,:,-1] = tiles[:,:,-1] # Value
-        prev_tiles_info[:,:,-3:-1] = tiles[:,:,-3:-1] # Crowns
-        prev_tiles_info[:,:,:N_TILE_TYPES] = F.one_hot(tiles[:,:,0], num_classes=N_TILE_TYPES)
-        prev_tiles_info[:,:,N_TILE_TYPES:-3] = F.one_hot(tiles[:,:,1], num_classes=N_TILE_TYPES)
-        return prev_tiles_info
+        tiles_info[:,:,-1] = tiles[:,:,-1] # Value
+        # +1 for empty (previous tile first round and current tiles last round)
+        tiles_info[:,:,-3:-1] = tiles[:,:,-3:-1] # Crowns
+        tiles_info[:,:,:N_TILE_TYPES+1] = F.one_hot(tiles[:,:,0], num_classes=N_TILE_TYPES+1)
+        tiles_info[:,:,N_TILE_TYPES+1:-3] = F.one_hot(tiles[:,:,1], num_classes=N_TILE_TYPES+1)
+        return tiles_info
         #return prev_tiles_info.reshape(self.batch_size, -1)
     
     # Assumes the observation at 0 is current player

@@ -86,41 +86,37 @@ network_info = agent.NetworksInfo(
 
 if __name__ == '__main__':
     player = agent.PlayerAC(
+        batch_size = BATCH_SIZE,
         n_players = N_PLAYERS,
         gamma = 0.99,
         lr_a = 1e-4,
         lr_c = 5e-4,
-        coordinate_std = 2,
+        coordinate_std = 1,
         network_info = network_info
     )
     
+    # Something really wrong :
+    # when update, previous_values comes from the other player......
+    # computed from his pov.... so that sucks
+    
     env = gym.make('KingDomino-v0', n_players=2)
-    Printer.activated = False
-    n_episodes = 11250
-    scores_episode = np.zeros(n_episodes)
-    sum_rewards_episode = np.zeros(n_episodes)
-    for e in range(n_episodes):
-        print('Episode :', e)
-        i = 0
-        state,_ = env.reset()
+    Printer.activated = True
+    n_steps = 11000
+    state,_ = env.reset()
+    dones = np.array([False],dtype=bool)
+    rewards = np.zeros(n_steps)
+    for i in range(n_steps):
+        print('Step :', i)
         dones = [False]
-        total_reward = 0
-        while True:
-            for key in state:
-                state[key] = np.expand_dims(state[key], axis=0)
-            action = player.action(state, dones)
-            state,reward,terminated,truncated,info = env.step(np.array(action))
-            print('Reward :', reward)
-            player.give_reward(reward)
-            total_reward += reward
-            dones = [terminated or truncated]
-            if dones[0]:
-                scores_episode[e] = np.mean(info['Scores'])
-                sum_rewards_episode[e] = total_reward
-                break
-        # if e % 1000 == 0:
-        #     Thread(target = check).start()
-        #     a = input('Input to stop')
+        for key in state:
+            state[key] = np.expand_dims(state[key], axis=0)
+        action = player.action(state, dones)
+        state,reward,terminated,truncated,info = env.step(np.array(action))
+        print('Reward :', reward)
+        rewards[i] = reward
+        player.give_reward(reward)
+
+        dones = [terminated or truncated]
                     
     # envs = gym.vector.AsyncVectorEnv([
     #     lambda: gym.make("KingDomino-v0", n_players=N_PLAYERS) for i in range(BATCH_SIZE)
