@@ -68,7 +68,7 @@ class BoardNetwork(nn.Module):
             pool_stride = network_info.pool_stride
             )
         self.fc = NeuralNetwork(
-            input_size = 3200, # modify according to error...or compute conv accordingly
+            input_size = 810, # modify according to error...or compute conv accordingly
             output_size = network_info.board_rep_size,
             n = network_info.board_fc_n,
             l = network_info.board_fc_l)
@@ -108,10 +108,11 @@ class PlayerNetwork(nn.Module):
 
 class Shared(nn.Module):
     def __init__(
-            self, n_players, network_info, output_size):
+            self, n_players, device, network_info, output_size):
         super(Shared, self).__init__()
         self.n_players = n_players
         self.network_info = network_info
+        self.device = device
         
         self.player_network = PlayerNetwork(network_info)
         
@@ -135,7 +136,8 @@ class Shared(nn.Module):
             batch_size,
             self.n_players,
             N_TILE_TYPES+2,
-            board_size,board_size])
+            board_size,board_size],
+            device=self.device)
         boards_one_hot.scatter_(2, (x['Boards'][:,:,0]+2).unsqueeze(2), 1)
         boards_one_hot = boards_one_hot[:,:,1:] # Exclude center matrices
         boards_one_hot[:,:,-1,:,:] = x['Boards'][:,:,1] # Place crowns at the end
@@ -146,7 +148,8 @@ class Shared(nn.Module):
         tiles_info = torch.zeros([
             batch_size,
             self.n_players,
-            TILE_ENCODING_SIZE])
+            TILE_ENCODING_SIZE],
+            device=self.device)
         tiles_info[:,:,-1] = tiles[:,:,-1] # Value
         # +1 for empty (previous tile first round and current tiles last round)
         tiles_info[:,:,-3:-1] = tiles[:,:,-3:-1] # Crowns
@@ -162,7 +165,8 @@ class Shared(nn.Module):
         current_tiles_info = torch.zeros([
             batch_size,
             self.n_players,
-            TILE_ENCODING_SIZE+1])
+            TILE_ENCODING_SIZE+1],
+            device=self.device)
         current_tiles_info[:,:,:-1] = self.tile2onehot(x['Current tiles'][:,:,:-1])
         current_tiles_info[:,:,-1] = x['Current tiles'][:,:,-1]
         return current_tiles_info
@@ -177,12 +181,13 @@ class Shared(nn.Module):
         players_output = torch.zeros([
             batch_size,
             self.n_players,
-            self.network_info.player_rep_size])
+            self.network_info.player_rep_size],
+            device=self.device)
         # TODO : parallelize this ?
-        # for i in range(self.n_players):
-        #     players_output[:,i] = self.player_network(
-        #         board=boards_one_hot[:,i],
-        #         previous_tile=previous_tile_one_hot[:,i])
+        for i in range(self.n_players):
+            players_output[:,i] = self.player_network(
+                board=boards_one_hot[:,i],
+                previous_tile=previous_tile_one_hot[:,i])
         return players_output.reshape(batch_size, -1)
 
     # equivalence of players not taken into account (ideally should share weights) 

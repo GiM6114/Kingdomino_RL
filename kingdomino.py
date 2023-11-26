@@ -1,9 +1,10 @@
 import random
 import numpy as np
 from collections import namedtuple
-from itertools import permutations
+from itertools import permutations,product
 import gym
 from gym import spaces
+from copy import deepcopy
 
 from setup import GET_TILE_DATA, TILE_SIZE, N_TILE_TYPES
 from board import Board
@@ -51,6 +52,10 @@ register(
 #%%
 class Kingdomino(gym.Env):
     
+    
+    # self.current_tiles_player[tile_id] = prev_current_tiles_player_tile_id
+    # current_tiles_player[tile_id] = player who chose this tile id (or -1)
+    
     empty_tile = np.array([N_TILE_TYPES,N_TILE_TYPES,-1,-1,-1]) 
     # 0 not perfect because 0 represents a tile type...
     # but cant put -1 bcs will be flagged as incorrect index
@@ -60,8 +65,13 @@ class Kingdomino(gym.Env):
                  2:np.array([-1,0]),
                  3:np.array([0,-1]),
                  4:np.array([0,0])}
-    
-    def __init__(self, n_players=None, players=None, render_mode=None):
+        
+    def __init__(self, 
+                 n_players=None, 
+                 test=False, 
+                 players=None, 
+                 render_mode=None,
+                 kingdomino=None):
         self.tile_deck = TileDeck()
         if players is not None:
             self.players = players
@@ -88,13 +98,15 @@ class Kingdomino(gym.Env):
         self.render_mode = render_mode
         self.window = None
         self.clock = None
-    
+        
+
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
         # last position in list : plays last
         self.tile_deck.reset()
         self.first_turn = True
         self.last_turn = False
+        self.just_reseted = False
         self.current_tiles = np.tile(Kingdomino.empty_tile, self.n_players).reshape(self.n_players, TILE_SIZE)
         self.current_tiles_player = -np.ones(self.n_players)
         self.previous_tiles = np.tile(Kingdomino.empty_tile, self.n_players).reshape(self.n_players, TILE_SIZE)
@@ -119,6 +131,7 @@ class Kingdomino(gym.Env):
             if self.last_turn:
                 self.reset()
                 self.just_reseted = True
+                self.players_aware_reset = 0
             else:
                 self.first_turn = False
                 self._current_player_itr = 0
@@ -154,65 +167,100 @@ class Kingdomino(gym.Env):
             self.current_tiles = self.current_tiles[self.current_tiles[:,-1].argsort()]
         Printer.print('Current tiles :', self.current_tiles)
         Printer.print('Previous tiles :', self.previous_tiles)
+        
+    def reward(self, terminated):
+        pass
 
-    
-    # player_id         : player who wants to play
-    # tile_id           : id of tile he wants to pick if there is still tiles to pick
-    # position_inversed : tuple (TilePosition, bool) if there is a tile the player has
     def step(self, action):
         
-        if self.just_reseted:
-            self.just_reseted = False
-            return self._get_obs(), 0, False, False, {'Scores':np.zeros(self.n_players)}
-        
-        Printer.print('---',self.current_player_id, "'s turn-----")
-        Printer.print('Action :')
+        tile_id, position = action
+        # Select tile
+        if not self.last_turn:
+            self.pickTile(tile_id)
 
-        action = action.flatten()
-        position = np.stack((action[:2], 
-                             action[:2] + Kingdomino.direction[action[2]]
-                            )).astype(int)
-        tile_id = action[-1].astype(int)
+        if not self.first_turn:
+            if not (position == Kingdomino.discard_tile).all():
+                self.placeTile(position, self.previous_tiles[self.current_player_id])
+            else:
+                Printer.print('Tile discarded')
+ 
+ 
+        terminated = self.last_turn and \
+            self.current_player_itr == (self.n_players-1)
+        reward = self.reward(terminated)
+        self.current_player_itr += 1
+
+        return {}, reward, terminated, False, {'Scores': self.scores()} if terminated else {}
+        #return self._get_obs(), reward, terminated, False, {'Scores': self.scores()}
+
+    # def step(self, action):
         
-        Printer.print('    Position :', position)
-        Printer.print('    Tile chosen :', tile_id)
+    #     if self.just_reseted:
+    #         Printer.print('Just reseted, empty step.')
+    #         self.players_aware_reset += 1
+    #         if self.players_aware_reset == self.n_players:
+    #             self.players_aware_reset = 0
+    #             self.just_reseted = False
+    #         return self._get_obs(), 0, False, False, {'Scores':np.zeros(self.n_players)}
+        
+    #     Printer.print('---',self.current_player_id, "'s turn-----")
+    #     Printer.print('Action :')
+
+    #     action = action.flatten()
+    #     position = np.stack((action[:2], 
+    #                          action[:2] + Kingdomino.direction[action[2]]
+    #                         )).astype(int)
+    #     tile_id = action[-1].astype(int)
+        
+    #     Printer.print('    Position :', position)
+    #     Printer.print('    Tile chosen :', tile_id)
 
         
-        truncated = False
-        try:
-            prev_new_order_tile_id = self.new_order[tile_id]
-            prev_current_tiles_player_tile_id = self.current_tiles_player[tile_id]
+    #     truncated = False
+    #     try:
+    #         if self.current_tiles_player[tile_id] != -1:
+    #             tile_id = 1 - tile_id
+                
+    #         prev_new_order_tile_id = self.new_order[tile_id]
+    #         prev_current_tiles_player_tile_id = self.current_tiles_player[tile_id]
             
-            # Select tile
-            if not self.last_turn:
-                # GameException possible
-                self.pickTile(tile_id)
+    #         # Select tile
+    #         if not self.last_turn:
+    #             # GameException possible
+    #             self.pickTile(tile_id)
 
-            if not self.first_turn:
-                if not (position == Kingdomino.discard_tile).all():
-                    # GameException possible
-                    self.placeTile(position, self.previous_tiles[self.current_player_id])
-                else:
-                    Printer.print('Tile discarded')
-            self.current_player_itr += 1
-
-            terminated = self.last_turn and \
-                self.current_player_itr == self.n_players
-            state = self._get_obs()
-        except GameException as e:
-            print(e.msg)
-            # send same states as output before, with negative reward !!!!
-            self.new_order[tile_id] = prev_new_order_tile_id
-            self.current_tiles_player[tile_id] = prev_current_tiles_player_tile_id
-            scores = self.scores()
-            return self._get_obs(), -0.001, False, False, {'Scores': scores}
+    #         if not self.first_turn:
+    #             if not (position == Kingdomino.discard_tile).all():
+    #                 # GameException possible
+    #                 self.placeTile(position, self.previous_tiles[self.current_player_id])
+    #             else:
+    #                 Printer.print('Tile discarded')
+                    
+    #         scores = self.scores()
+    #         tot_scores = scores.sum()
+    #         score = scores[self.current_player_id]
+    #         reward = (score / max(tot_scores,0.01))
+    #         reward += 0.5 #managed to reach this point, no out of game decision
             
-        scores = self.scores()
-        reward = scores[self.current_player_id] - (np.sum(scores)-scores[self.current_player_id]) / (self.n_players-1)
-        Printer.print(scores)
-        Printer.print('Score reward :', reward)
-        reward += 10 #managed to reach this point, no out of game decision
-        return state, reward, terminated, truncated, {'Scores': scores}
+    #         Printer.print('Scores :', scores)
+    #         Printer.print('Reward :', reward)
+ 
+    #         terminated = self.last_turn and \
+    #             self.current_player_itr == (self.n_players-1)
+    #         self.current_player_itr += 1
+
+    #         state = self._get_obs()
+    #     except GameException as e:
+    #         # send same states as output before, with negative reward !!!!
+    #         self.new_order[tile_id] = prev_new_order_tile_id
+    #         self.current_tiles_player[tile_id] = prev_current_tiles_player_tile_id
+    #         scores = self.scores()
+    #         if self.test:
+    #             truncated = True
+    #             print('OuiOuiOuiOuiOuiOuiOuiOuiOuiOui')
+    #         return self._get_obs(), -0.001, False, truncated, {'Scores': scores}
+
+    #     return state, reward, terminated, truncated, {'Scores': scores}
         
     # Board : 9*9 tile type + 9*9 crowns
     # Current/Previous tiles : 2 tile type, 2 crowns, 1 which player has chosen it, 1 value of tile
@@ -250,15 +298,6 @@ class Kingdomino(gym.Env):
         Printer.print('New order :', self.new_order)
         Printer.print('Current tiles player :', self.current_tiles_player)
 
-    
-    def selectTileRandom(self):
-        if self.last_turn:
-            return None
-        available = np.where(self.current_tiles_player == -1)[0]
-        tile_id = available[random.randint(0, len(available)-1)]
-        return tile_id
-        
-
     def placeTile(self, position, tile):
         Printer.print(f'Trying to place tile {tile} at {position}.')
         if (position < 0).any() or (position > 9).any():
@@ -266,6 +305,13 @@ class Kingdomino(gym.Env):
             return
         self.checkPlacementValid(position, tile)   
         self.boards[self.current_player_id].placeTile(position, tile)
+    
+    def selectTileRandom(self):
+        if self.last_turn:
+            return None
+        available = np.where(self.current_tiles_player == -1)[0]
+        tile_id = available[random.randint(0, len(available)-1)]
+        return tile_id
     
     def selectTilePositionRandom(self):
         if self.first_turn:
@@ -279,7 +325,9 @@ class Kingdomino(gym.Env):
         else:
             position = Kingdomino.discard_tile
         return position
-    
+
+    def getRandomAction(self):
+        return (self.selectTileRandom(), self.selectTilePositionRandom())
     
     def printCurrentTiles(self):
         print('Tiles to pick from : \n')
@@ -326,6 +374,21 @@ class Kingdomino(gym.Env):
                 
         return False
     
+    def getPossibleActions(self):
+        tiles_possible = self.getPossibleTileChoices()
+        positions_possible = self.getPossiblePositions(
+            tile=self.previous_tiles[self.current_player_id],
+            every_pos=True)
+        
+        # TODO: speed up using numpy generated cartesian product ?
+        return product(tiles_possible, positions_possible)
+        
+    
+    def getPossibleTileChoices(self):
+        if self.last_turn:
+            return [None]
+        return np.where(self.current_tiles_player == -1)[0]
+
     
     def getPossiblePositions(self, tile, every_pos=False):
         board = self.boards[self.current_player_id]
@@ -353,6 +416,8 @@ class Kingdomino(gym.Env):
                                     return available_pos
                             except GameException:
                                 pass
+        if len(available_pos) == 0:
+            available_pos = [self.discard_tile]
         return available_pos
     
     def isTilePlaceable(self, tile):

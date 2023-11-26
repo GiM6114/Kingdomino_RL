@@ -1,3 +1,5 @@
+from printer import Printer
+
 import numpy as np
 
 class Zone:
@@ -31,10 +33,7 @@ class Board:
     
     # position : np.array([pos halftile 1, pos halftile 2])
     def placeTile(self, position, tile):
-        print('Position :', position)
-        print(tile)
         position = position.T
-        print('Position T :', position)
         self.board[position[0],position[1]] = tile[:2]
         if tile[0] != -1:
             self.nb_planks += 1
@@ -49,7 +48,7 @@ class Board:
         x_size,y_size = self.board.shape
         score = 0
         board_seen = np.zeros_like(self.board)
-        print('Left, right, bottom, top :', self.left_most, self.right_most, self.bottom_most, self.top_most)
+        Printer.print('Left, right, bottom, top :', self.left_most, self.right_most, self.bottom_most, self.top_most)
         for x in range(x_size):
             for y in range(y_size):
                 if self.getBoard(x,y) == -1:
