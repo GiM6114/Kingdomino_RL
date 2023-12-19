@@ -66,7 +66,29 @@ class Board:
         
         return score
                 
-                
+        
+    def countZones(self):
+        x_size,y_size = self.board.shape
+        score = 0
+        board_seen = np.zeros_like(self.board)
+        Printer.print('Left, right, bottom, top :', self.left_most, self.right_most, self.bottom_most, self.top_most)
+        for x in range(x_size):
+            for y in range(y_size):
+                if self.getBoard(x,y) == -1:
+                    continue
+                nb_squares,_ = self.computeZone(x, y, board_seen, self.board[x,y])
+                score += nb_squares
+
+        # The Middle Kingdom
+        if self.isCastleCentered():
+            score += 10
+            
+        # Harmony
+        if self.nb_planks == self.max_planks:
+            score += 5
+        
+        return score                
+        
     def computeZone(self, x, y, board_seen, env_type):
         if self.getBoard(x, y) != env_type or board_seen[x,y] == 1:
             return 0,0

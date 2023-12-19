@@ -5,17 +5,18 @@ import torch.nn.functional as F
 import torch.distributions as distributions
 import torch
 torch.autograd.set_detect_anomaly(True)
-from collections import namedtuple
+from collections import namedtuple,deque
 # from torchviz import make_dot
 # from IPython.display import display
 from time import time
 from copy import deepcopy
 import itertools
+import math
 
 from board import Board
 from setup import N_TILE_TYPES
 from networks import Shared, NeuralNetwork
-
+from printer import Printer
 
 class Pipeline:
     def __init__(self, player, env):
@@ -24,8 +25,8 @@ class Pipeline:
 
 
 class HumanPlayer:      
-    def action(self, state):
-        tile_id = input("Which tile do you choose ?")
+    def action(self, state, kingdomino):
+        tile_id = int(input("Which tile do you choose ?"))
         x1 = int(input("x1 ? "))
         y1 = int(input("y1 ? "))      
         x2 = int(input("x2 ? "))
@@ -34,28 +35,227 @@ class HumanPlayer:
 
 
 class RandomPlayer:
-    def action(self, kingdomino):
+    def action(self, state, kingdomino):
         return kingdomino.getRandomAction()
 
+     
+
+Transition = namedtuple('Transition',
+                        ('state', 'action', 'reward', 'next_state', 'possible_actions'))
+
+class ReplayMemory(object):
+
+    def __init__(self, capacity):
+        self.memory = deque([], maxlen=capacity)
+
+    def push(self, *args):
+        """Save a transition"""
+        self.memory.append(Transition(*args))
+
+    def sample(self, batch_size):
+        return random.sample(self.memory, batch_size)
+
+    def __len__(self):
+        return len(self.memory)
+
+class DQN(nn.Module):
+    def __init__(self,
+                 n_players,
+                 network_info,
+                 output_size,
+                 device):
+        super().__init__()
+        self.shared = Shared(
+            n_players=n_players,
+            network_info=network_info,
+            output_size=network_info.shared_rep_size,
+            device=device).to(device)
+        self.action_and_shared = NeuralNetwork(
+            input_size=network_info.shared_rep_size + 2 + 2 + n_players,
+            output_size=1,
+            l=network_info.shared_l,
+            n=network_info.shared_n)
         
+    # state : batch_size * messy (batch_size = 1 ==> forward with multiple actions)
+    # action: batch_size * 6 OR #possible_actions * 6
+    def forward(self, state, action):
+        state = self.shared(state) # batch_size * shared_rep_size
+        if state.shape[0] == 1:
+            # case where several actions applied to a single state
+            state = state.repeat(repeats=(action.size(dim=0),1))
+        x = torch.cat((state,action), dim=1)
+        x = self.action_and_shared(x)
+        return x
+        
+
+class DQN_Agent:
+    
+    def __init__(self, 
+                 n_players, 
+                 batch_size,
+                 eps_scheduler,
+                 tau,
+                 lr,
+                 gamma,
+                 id,
+                 network_info=None,
+                 replay_memory_size=None,
+                 device='cpu',
+                 policy=None,
+                 target=None,
+                 memory=None):
+        self.batch_size = batch_size
+        self.eps_scheduler = eps_scheduler
+        self.tau = tau
+        self.lr = lr
+        self.device = device
+        self.n_players = n_players
+        self.id = id
+        self.gamma = gamma
+        
+        self.policy = policy
+        if self.policy is None:
+            self.policy = DQN(
+                n_players=self.n_players,
+                network_info=network_info,
+                output_size=1,
+                device=self.device).to(self.device)
+        self.target = target
+        if self.target is None:
+            self.target = DQN(
+                n_players=self.n_players,
+                network_info=network_info,
+                output_size=1,
+                device=self.device).to(self.device)
+            self.target.load_state_dict(self.policy.state_dict())
+        self.optimizer = torch.optim.AdamW(self.policy.parameters(), lr=lr, amsgrad=True)
+        self.criterion = nn.SmoothL1Loss()
+        self.memory = memory
+        if self.memory is None:
+            self.memory = ReplayMemory(replay_memory_size)
+        self.learning = True
+        self.reset()
+    
+    def reset(self):
+        self.n_steps = 0
+        
+    def convert_state_torch(self, state):
+        if state is None or torch.is_tensor(state['Boards']):
+            return state
+        for k in state:
+            state[k] = torch.tensor(
+                state[k], device=self.device, dtype=torch.int64).unsqueeze(0)
+        return state
+    
+    def convert_actions_torch(self, actions):
+        actions_conc = [np.concatenate(([action[0]],action[1].reshape(1,-1).squeeze())) for action in actions]
+        # convert first action nb to one_hot
+        actions_conc = torch.tensor(np.array(actions_conc), device=self.device, dtype=torch.int64)
+        actions_conc_one_hot_tile_id = \
+            torch.zeros((actions_conc.size()[0], self.n_players+2+2), device=self.device, dtype=torch.int64)
+        actions_conc_one_hot_tile_id[:,self.n_players:] = actions_conc[:,1:]
+        actions_conc_one_hot_tile_id[:,:self.n_players] = F.one_hot(actions_conc[:,0], num_classes=self.n_players)
+        return actions_conc_one_hot_tile_id
+    
+    def select_action(self, state, kingdomino):
+        actions = kingdomino.getPossibleActions()
+        actions_torch = self.convert_actions_torch(actions)
+        self.prev_possible_actions = actions_torch
+        if self.learning:
+            sample = random.random()
+            eps_threshold = self.eps_scheduler.eps() 
+        if not self.learning or sample > eps_threshold:
+            with torch.no_grad():
+                qvalues = self.policy(state, actions_torch).squeeze()
+                argmax = qvalues.argmax()
+                return actions[argmax],actions_torch[argmax]
+        i = random.randint(0, len(actions)-1)
+        return actions[i],actions_torch[i]
+    
+    def action(self, state, kingdomino):
+        state = self.convert_state_torch(state)
+        self.prev_state = state
+        action,action_torch = self.select_action(state, kingdomino)
+        self.prev_action = action_torch
+        return action
+        
+    def give_reward(self, reward, next_state):
+        self.memory.push(
+            self.prev_state, 
+            self.prev_action.unsqueeze(0),
+            torch.tensor([reward], device=self.device),
+            self.convert_state_torch(next_state),
+            self.prev_possible_actions)
+        self.optimize()
+        
+    def optimize(self):
+        if len(self.memory) < self.batch_size:
+            return
+        transitions = self.memory.sample(self.batch_size)
+        batch = Transition(*zip(*transitions))
+        non_final_mask = torch.tensor(
+            tuple(map(lambda s: s is not None, 
+                      batch.next_state)), device=self.device, dtype=torch.bool)
+        non_final_next_states = [s for s in batch.next_state if s is not None]
+        state_batch = batch.state
+        action_batch = torch.cat(batch.action)
+        reward_batch = torch.cat(batch.reward)
+        state_batch = self.listdict2dicttensor(state_batch)
+        #non_final_next_states = self.listdict2dicttensor(non_final_next_states)
+        possible_actions_batch = batch.possible_actions
+        
+        state_action_values = self.policy(state_batch, action_batch).squeeze()
+        next_state_values = torch.zeros(self.batch_size, device=self.device)
+        
+        with torch.no_grad():
+            # TODO: problem states list of dict, cant apply non_final_mask directly
+            next_state_values_non_final = torch.zeros(torch.sum(non_final_mask), device=self.device)
+            # TODO: awful loop, but problem bcs possible actions take different shapes you see
+            for i,(state,actions) in enumerate(zip(non_final_next_states,possible_actions_batch)):
+                if state is None:
+                    continue
+                values = self.target(state, actions).squeeze()
+                next_state_values_non_final[i] = values.max()
+            next_state_values[non_final_mask] = next_state_values_non_final
+        expected_state_action_values = (next_state_values * self.gamma) + reward_batch
+        loss = self.criterion(state_action_values, expected_state_action_values)
+        self.optimizer.zero_grad()
+        loss.backward()
+        torch.nn.utils.clip_grad_value_(self.policy.parameters(), 100)
+        self.optimizer.step()
+        self.update_target()
+        
+    def update_target(self):
+        target_net_state_dict = self.target.state_dict()
+        policy_net_state_dict = self.policy.state_dict()
+        for key in policy_net_state_dict:
+            target_net_state_dict[key] = policy_net_state_dict[key]*self.tau + target_net_state_dict[key]*(1-self.tau)
+        self.target.load_state_dict(target_net_state_dict)
+        
+    def listdict2dicttensor(self, state_batch):
+        state_batch_dict = {key:value for key,value in state_batch[0].items()}
+        for state in state_batch[1:]:
+            for key in state_batch_dict.keys():
+                state_batch_dict[key] = torch.cat((state_batch_dict[key], state[key]), dim=0)
+        return state_batch_dict
+
+#%%
 
 class MPC_Agent:
     
     def __init__(self, n_rollouts, player_id):
         self.n_rollouts = n_rollouts
-        self.player_id = player_id
+        self.id = player_id
     
     def action(self, kingdomino):
-
         actions = kingdomino.getPossibleActions()
         best_action = None
         best_result = -np.inf
         for action in actions:
-            print(action)
             # do the action in deepcopied env
             # unroll with random policy
             result = 0
-            for _ in range(self.n_rollouts):
+            for i in range(self.n_rollouts):
                 kingdomino_copy = deepcopy(kingdomino)
                 result += self.rollout(kingdomino_copy, action)
             if result > best_result:
@@ -65,13 +265,15 @@ class MPC_Agent:
             
     def rollout(self, kingdomino, action):
         done = False
+        Printer.print('Copied KDs order :', kingdomino.order)
+        Printer.print('Copied KDs current player id :', kingdomino.current_player_id)
         while not done:
-            state,reward,terminated,truncated,infos = kingdomino.step(action)
-            done = terminated or truncated
+            terminated = kingdomino.step(action)
+            done = terminated
             if not done:
                 action = kingdomino.getRandomAction()
         scores = kingdomino.scores()
-        final_result = scores[self.player_id] - np.max(scores)
+        final_result = self.id == np.argmax(scores)
         return final_result
       
 
@@ -99,7 +301,7 @@ NetworksInfo = namedtuple('NetworksInfo',
                            'critic_l',
                            'critic_n'])
       
-
+#%%
 class PlayerAC:
     def __init__(self, 
                  n_players, batch_size, 
@@ -252,6 +454,8 @@ class PlayerAC:
         
     def give_reward(self, rewards):
         self.rewards = torch.tensor(rewards)
+
+#%%
 
 class PlayerAC_base:
     def __init__(self, 
