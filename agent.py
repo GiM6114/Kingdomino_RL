@@ -12,11 +12,13 @@ from time import time
 from copy import deepcopy
 import itertools
 import math
+from IPython.core.display import Image, display
 
 from board import Board
 from setup import N_TILE_TYPES
 from networks import Shared, NeuralNetwork
 from printer import Printer
+from graphics import draw_obs
 
 class Pipeline:
     def __init__(self, player, env):
@@ -31,7 +33,7 @@ class HumanPlayer:
         y1 = int(input("y1 ? "))      
         x2 = int(input("x2 ? "))
         y2 = int(input("y2 ? "))
-        return tile_id, (x1,y1,x2,y2)
+        return tile_id, np.array([[x1,y1],[x2,y2]])
 
 
 class RandomPlayer:
@@ -68,13 +70,13 @@ class DQN(nn.Module):
         self.shared = Shared(
             n_players=n_players,
             network_info=network_info,
-            output_size=network_info.shared_rep_size,
+            output_size=network_info['shared_rep_size'],
             device=device).to(device)
         self.action_and_shared = NeuralNetwork(
-            input_size=network_info.shared_rep_size + 2 + 2 + n_players,
+            input_size=network_info['shared_rep_size'] + 2 + 2 + n_players,
             output_size=1,
-            l=network_info.shared_l,
-            n=network_info.shared_n)
+            l=network_info['shared_l'],
+            n=network_info['shared_n'])
         
     # state : batch_size * messy (batch_size = 1 ==> forward with multiple actions)
     # action: batch_size * 6 OR #possible_actions * 6
@@ -98,7 +100,7 @@ class DQN_Agent:
                  lr,
                  gamma,
                  id,
-                 network_info=None,
+                 hp_archi=None,
                  replay_memory_size=None,
                  device='cpu',
                  policy=None,
@@ -117,14 +119,14 @@ class DQN_Agent:
         if self.policy is None:
             self.policy = DQN(
                 n_players=self.n_players,
-                network_info=network_info,
+                network_info=hp_archi,
                 output_size=1,
                 device=self.device).to(self.device)
         self.target = target
         if self.target is None:
             self.target = DQN(
                 n_players=self.n_players,
-                network_info=network_info,
+                network_info=hp_archi,
                 output_size=1,
                 device=self.device).to(self.device)
             self.target.load_state_dict(self.policy.state_dict())
@@ -138,6 +140,8 @@ class DQN_Agent:
     
     def reset(self):
         self.n_steps = 0
+        self.prev_state = None
+        self.prev_action = None
         
     def convert_state_torch(self, state):
         if state is None or torch.is_tensor(state['Boards']):
@@ -160,6 +164,8 @@ class DQN_Agent:
     def select_action(self, state, kingdomino):
         actions = kingdomino.getPossibleActions()
         actions_torch = self.convert_actions_torch(actions)
+        if state is None:
+            return actions[0],actions_torch[0]
         self.prev_possible_actions = actions_torch
         if self.learning:
             sample = random.random()
@@ -180,10 +186,14 @@ class DQN_Agent:
         return action
         
     def give_reward(self, reward, next_state):
+        # print('Previous state:')
+        # display(draw_obs(self.prev_state))
+        # print('State:')
+        # display(draw_obs(next_state))
         self.memory.push(
             self.prev_state, 
             self.prev_action.unsqueeze(0),
-            torch.tensor([reward], device=self.device),
+            torch.tensor([reward], device=self.device, dtype=torch.float32),
             self.convert_state_torch(next_state),
             self.prev_possible_actions)
         self.optimize()
@@ -205,17 +215,21 @@ class DQN_Agent:
         possible_actions_batch = batch.possible_actions
         
         state_action_values = self.policy(state_batch, action_batch).squeeze()
-        next_state_values = torch.zeros(self.batch_size, device=self.device)
         
+        next_state_values = torch.zeros(self.batch_size, device=self.device)
         with torch.no_grad():
             # TODO: problem states list of dict, cant apply non_final_mask directly
             next_state_values_non_final = torch.zeros(torch.sum(non_final_mask), device=self.device)
-            # TODO: awful loop, but problem bcs possible actions take different shapes you see
+            # TODO: god awful loop, but problem bcs possible actions take different shapes you see
+            # Should fill in with 0s and ignore the results
             for i,(state,actions) in enumerate(zip(non_final_next_states,possible_actions_batch)):
                 if state is None:
                     continue
                 values = self.target(state, actions).squeeze()
                 next_state_values_non_final[i] = values.max()
+                # display(draw_obs(state))
+                # print(actions)
+                # print(values)
             next_state_values[non_final_mask] = next_state_values_non_final
         expected_state_action_values = (next_state_values * self.gamma) + reward_batch
         loss = self.criterion(state_action_values, expected_state_action_values)

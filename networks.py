@@ -59,19 +59,19 @@ class BoardNetwork(nn.Module):
         
         self.cnn = CNN(
             in_channels = n_inputs,
-            conv_channels = network_info.conv_channels,
-            conv_kernel_size = network_info.conv_kernel_size,
-            conv_stride = network_info.conv_stride,
-            l = network_info.conv_l,
-            pool_place = network_info.pool_place,
-            pool_kernel_size = network_info.pool_kernel_size,
-            pool_stride = network_info.pool_stride
+            conv_channels = network_info['conv_channels'],
+            conv_kernel_size = network_info['conv_kernel_size'],
+            conv_stride = network_info['conv_stride'],
+            l = network_info['conv_l'],
+            pool_place = network_info['pool_place'],
+            pool_kernel_size = network_info['pool_kernel_size'],
+            pool_stride = network_info['pool_stride']
             )
         self.fc = NeuralNetwork(
             input_size = 810, # modify according to error...or compute conv accordingly
-            output_size = network_info.board_rep_size,
-            n = network_info.board_fc_n,
-            l = network_info.board_fc_l)
+            output_size = network_info['board_rep_size'],
+            n = network_info['board_fc_n'],
+            l = network_info['board_fc_l'])
         
         
     # x : [batch_size, 2, 9, 9]
@@ -94,10 +94,10 @@ class PlayerNetwork(nn.Module):
             network_info=network_info)
         
         self.join_info_network = NeuralNetwork(
-            input_size = network_info.board_rep_size + TILE_ENCODING_SIZE,
-            output_size = network_info.player_rep_size, 
-            l = network_info.board_prev_tile_fc_l,
-            n = network_info.player_rep_size)
+            input_size = network_info['board_rep_size'] + TILE_ENCODING_SIZE,
+            output_size = network_info['player_rep_size'], 
+            l = network_info['board_prev_tile_fc_l'],
+            n = network_info['player_rep_size'])
 
     def forward(self, board, previous_tile):
         board_rep = self.board_network(board)
@@ -117,13 +117,13 @@ class Shared(nn.Module):
         self.player_network = PlayerNetwork(network_info)
         
         shared_input_size = \
-            (self.network_info.player_rep_size + TILE_ENCODING_SIZE+1) * self.n_players
+            (self.network_info['player_rep_size'] + TILE_ENCODING_SIZE+1) * self.n_players
             
         self.shared_network = NeuralNetwork(
             input_size=shared_input_size,
             output_size=output_size,
-            l=self.network_info.shared_l, 
-            n=self.network_info.shared_n)
+            l=self.network_info['shared_l'], 
+            n=self.network_info['shared_n'])
 
     # x['Boards'] : (batch_size, n_players, 2, 9, 9)
     # Returns : (batch_size, n_players, N_TILE_TYPES+2, 9, 9)
@@ -181,7 +181,7 @@ class Shared(nn.Module):
         players_output = torch.zeros([
             batch_size,
             self.n_players,
-            self.network_info.player_rep_size],
+            self.network_info['player_rep_size']],
             device=self.device)
         # TODO : parallelize this ?
         for i in range(self.n_players):

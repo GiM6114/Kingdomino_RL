@@ -37,10 +37,10 @@ class Board:
         self.board[position[0],position[1]] = tile[:2]
         if tile[0] != -1:
             self.nb_planks += 1
-            self.left_most = min(self.left_most, np.min(position[1,:]))
-            self.right_most = max(self.right_most, np.max(position[1,:]))
-            self.bottom_most = max(self.bottom_most, np.max(position[0,:]))
-            self.top_most = min(self.top_most, np.min(position[0,:])) # inverted for display
+            self.left_most = min(self.left_most, np.min(position[0,:]))
+            self.right_most = max(self.right_most, np.max(position[0,:]))
+            self.bottom_most = max(self.bottom_most, np.max(position[1,:]))
+            self.top_most = min(self.top_most, np.min(position[1,:])) # inverted for display
         self.crown[position[0],position[1]] = tile[2:4]    
            
     

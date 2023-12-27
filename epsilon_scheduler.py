@@ -22,13 +22,15 @@ class EpsilonDecay:
         return eps
 
 class EpsilonDecayRestart(EpsilonDecay):
-    def __init__(self, eps_start, eps_end, eps_decay, eps_restart):
+    def __init__(self, eps_start, eps_end, eps_decay, eps_restart, eps_restart_threshold):
         super().__init__(eps_start, eps_end, eps_decay)
+        self.eps_restart_threshold = eps_restart_threshold
         self.eps_restart = eps_restart
     def eps(self):
         eps = super().eps()
-        if eps < self.eps_restart:
+        if eps < self.eps_restart_threshold:
             self.n_steps = 0
+            self.eps_start = self.eps_restart
         return eps
     
 # one episode : 26 steps
@@ -39,7 +41,7 @@ if __name__ == "__main__":
     import numpy as np
     import matplotlib.pyplot as plt
     
-    e = EpsilonDecayRestart(0.9,0.01,2000,0.05)
+    e = EpsilonDecayRestart(0.9,0.01,2000,0.2,0.05)
     a = np.zeros(50000)
     for i in range(a.shape[0]):
         a[i] = e.eps()

@@ -36,3 +36,30 @@ for i in range(90):
                     action[0]))
     state,reward,terminated,truncated,infos = kingdomino.step(action)
     print('Reward :', reward)
+
+#%%
+
+import graphics
+from IPython.core.display import Image, display
+
+m = player_1.memory
+samples = m.sample(min(100,len(m)))
+for sample in samples:
+    obs,action,reward,next_obs,possible_actions = sample
+    display(graphics.draw_obs(obs))
+    print(action)
+    print(reward)
+    print(possible_actions)
+    display(graphics.draw_obs(next_obs))
+#%%
+m = player_1.memory
+samples = m.sample(len(m))
+for sample in samples:
+    obs,action,reward,next_obs,possible_actions = sample
+    if reward == 0:
+        continue
+    display(graphics.draw_obs(obs))
+    print(action)
+    print(reward)
+    print(possible_actions)
+    display(graphics.draw_obs(next_obs))
