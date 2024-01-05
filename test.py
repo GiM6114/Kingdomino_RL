@@ -45,6 +45,7 @@ from IPython.core.display import Image, display
 m = player_1.memory
 samples = m.sample(min(100,len(m)))
 for sample in samples:
+    print('------- NEW SAMPLE --------')
     obs,action,reward,next_obs,possible_actions = sample
     display(graphics.draw_obs(obs))
     print(action)
@@ -63,3 +64,18 @@ for sample in samples:
     print(reward)
     print(possible_actions)
     display(graphics.draw_obs(next_obs))
+    
+#%%
+import os
+import numpy as np
+import matplotlib.pyplot as plt
+
+direc = 'D:\GitHub\Kingdomino_RL\Models\Model_2\Training_1'
+n = 100
+s = np.zeros((n,100,2))
+r = np.zeros((n,100,2))
+for i in range(1,n+1):
+    s[i-1] = np.load(os.path.join(direc, str(i*100), 'scores_vs_random.npy'))
+    r[i-1] = np.load(os.path.join(direc, str(i*100), 'train_rewards.npy'))
+plt.plot(s.mean(1)[:,0])
+plt.plot(r.mean(1)[:,0])

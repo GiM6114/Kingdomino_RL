@@ -17,6 +17,7 @@ separation_size = 10
 def draw_obs(obs):
     if obs is None:
         print('None')
+        return
     obs = obs.copy()
     for key in obs:
         obs[key] = obs[key].squeeze()

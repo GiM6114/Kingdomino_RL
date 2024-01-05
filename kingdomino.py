@@ -70,6 +70,28 @@ def reward_each_turn(kd, terminated):
     scores = kd.scores()
     return get_delta_current_best(kd.current_player_id, scores)
 
+# difference between difference of previous and current scores
+# should enable better credit assignment
+def reward_delta_each_turn(kd, terminated):
+    scores = kd.scores()
+    if kd.first_turn:
+        kd.prev_scores = np.zeros((kd.n_players,kd.n_players))
+        kd.prev_scores[kd.current_player_id] = scores
+        return None
+    reward = get_delta_current_best(kd.current_player_id, scores) - \
+        get_delta_current_best(kd.current_player_id, kd.prev_scores[kd.current_player_id])
+    kd.prev_scores[kd.current_player_id] = scores
+    return reward
+
+def player_focused_reward(kd, terminated):
+    scores = kd.scores()
+    if kd.first_turn:
+        kd.prev_scores = np.zeros((kd.n_players,kd.n_players))
+        kd.prev_scores[kd.current_player_id] = scores
+        return None
+    reward = scores[kd.current_player_id] - kd.prev_scores[kd.current_player_id][kd.current_player_id]
+    kd.prev_scores[kd.current_player_id] = scores
+    return reward
 
 def arr_except(arr, except_id):
     return np.concatenate((arr[:except_id],arr[except_id+1:]))
@@ -310,6 +332,8 @@ class Kingdomino:
         return False
     
     def getPossibleActions(self):
+        if self.empty_end_turn:
+            return None
         tiles_possible = self.getPossibleTileChoices()
         positions_possible = self.getPossiblePositions(
             tile=self.players[self.current_player_id].previous_tile,
@@ -361,11 +385,11 @@ if __name__ == '__main__':
     player_1 = agent.RandomPlayer()
     player_2 = agent.RandomPlayer()
     players = [player_1,player_2]
-    Printer.activated = True
+    Printer.activated = False
     done = False
     env = Kingdomino(
         players=players,
-        reward_fn=reward_each_turn)
+        reward_fn=player_focused_reward)
 
     for i in range(2):
         state = env.reset()

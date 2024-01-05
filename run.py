@@ -42,7 +42,7 @@ def train(env, players, n_episodes, print_every=10):
                 if reward_next_player is not None:
                     # if reward_next_player != 0:
                     #     print('Reward:', reward_next_player)
-                    players[player_id].give_reward(reward_next_player, state)
+                    players[player_id].give_reward(reward_next_player, state, env.getPossibleActions())
                     sum_rewards[player_id] += reward_next_player
                 action = players[player_id].action(state, env)
                 state,reward_next_player,done,info = env.step(action) # reward none for first turn
@@ -85,3 +85,4 @@ def test_random(env, player, n_episodes, print_every=10):
                     scores[i] = info['Scores']
                     break
     return scores
+

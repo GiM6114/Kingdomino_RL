@@ -8,17 +8,25 @@ from setup import N_TILE_TYPES, TILE_SIZE
 # 2*N_TILE_TYPES + 2 + 1 : one hot encoded tiles + crowns + value of tile
 TILE_ENCODING_SIZE = 2*(N_TILE_TYPES+1) + 2 + 1
 
+# use adaptive CNN
+# maybe use different network for current player and other players...
+# ...because current player is not just any player !
+# give as input to the current player network not just board
+# and previous tile, but also action (as auxiliary info of the ACNN)
+
+
+    
 class NeuralNetwork(nn.Module):
     def __init__(self, input_size, output_size, l, n):
         super(NeuralNetwork, self).__init__()
-
-        self.input_size = input_size
-        
-        layers = [nn.Linear(self.input_size, n)]
+        prev_n = input_size
+        layers = []
         for i in range(l):
+            layers.append(nn.Linear(prev_n, n[i]))  # Hidden layers
             layers.append(nn.SELU())  # Activation function
-            layers.append(nn.Linear(n, n))  # Hidden layers
-        layers.append(nn.Linear(n, output_size))
+            prev_n = n[i]
+        layers.append(nn.Linear(prev_n, output_size))
+        layers.append(nn.SELU())  # Activation function
         self.layers = nn.ModuleList(layers)
 
     def forward(self, x):
@@ -26,6 +34,135 @@ class NeuralNetwork(nn.Module):
             x = layer(x)
         return x
     
+class AdaptiveCNN(nn.Module):
+    def __init__(
+            self, aux_info_size, in_channels,
+            conv_channels, conv_kernel_size, conv_stride, l,
+            pool_place, pool_kernel_size, pool_stride,
+            FMN_l, FMN_n):
+        super(AdaptiveCNN, self).__init__()
+        
+        prev_n_channels = in_channels
+        FMNs = []
+        for i in range(l):
+            parameters_size = (prev_n_channels*conv_channels[i]*(conv_kernel_size[i]**2))+conv_channels[i]
+            FMNs.append(NeuralNetwork(aux_info_size, parameters_size, FMN_l, FMN_n))
+            prev_n_channels = conv_channels[i]
+        self.FMNs = nn.ModuleList(FMNs)
+        
+        self.conv_stride = conv_stride
+        self.in_channels = in_channels
+        self.conv_kernel_size = conv_kernel_size
+        self.conv_channels = conv_channels
+        self.pool_place = pool_place
+        self.pool_kernel_size = pool_kernel_size
+        self.pool_stride = pool_stride
+        self.l = l
+        
+    def forward(self, main, side):
+        prev_n_channels = self.in_channels
+        for i in range(self.l):
+            wb = self.FMNs[i](side) # (batch,(kernel_size**2)*prev_n_channels*n_channels + n_channels)
+            w = wb[:,:-self.conv_channels[i]].reshape(main.shape[0], self.conv_channels[i], prev_n_channels, self.conv_kernel_size[i], self.conv_kernel_size[i])
+            b = wb[:,-self.conv_channels[i]:]
+            pad = self.conv_kernel_size[i]//2
+            original_main_shape = main.shape
+            main = F.pad(main, (pad,pad,pad,pad), 'constant', -1) # pad each dimensions
+            main = F.conv2d(
+                input=main.reshape((1,-1)+main.shape[2:]), 
+                weight=w.reshape((-1,)+w.shape[2:]),
+                bias=b.reshape((-1,)+b.shape[2:]),
+                groups=w.shape[0]).reshape((original_main_shape[0], w.shape[1])+original_main_shape[2:])
+            if self.pool_place[i] != 0:
+                main = F.max_pool2d(main, self.pool_kernel_size[i], self.pool_stride[i])
+            main = F.selu(main)
+            prev_n_channels = self.conv_channels[i]
+        return main
+
+# # FC player focused network
+# class PlayerFocusedFC(nn.Module):
+#     def __init__(self, n_players, network_info, device):
+#         super().__init__()
+#         self.fc = NeuralNetwork(
+#             input_size = 9*9*9 + 4 + 2 + ,
+#             output_size = ,
+#             l,
+#             n)
+        
+#     def forward(self, x, action):
+        
+    
+class DQN(nn.Module):
+    def __init__(self,
+                 n_players,
+                 network_info,
+                 output_size,
+                 device):
+        super().__init__()
+        self.shared = Shared(
+            n_players=n_players,
+            network_info=network_info,
+            output_size=network_info['shared_rep_size'],
+            device=device).to(device)
+        self.action_and_shared = NeuralNetwork(
+            input_size=network_info['shared_rep_size'] + 2 + 2 + n_players,
+            output_size=1,
+            l=network_info['shared_l'],
+            n=network_info['shared_n'])
+        
+    # state : batch_size * messy (batch_size = 1 ==> forward with multiple actions)
+    # action: batch_size * 6 OR #possible_actions * 6
+    def forward(self, state, action):
+        state = self.shared(state) # batch_size * shared_rep_size
+        if state.shape[0] == 1:
+            # case where several actions applied to a single state
+            state = state.repeat(repeats=(action.size(dim=0),1))
+        x = torch.cat((state,action), dim=1)
+        x = self.action_and_shared(x)
+        return x
+    
+# Action of player, previous tile of player, current tiles in FC networks
+# outputting the weights of each convolutional layer on the board
+class PlayerFocusedACNN(nn.Module):
+    def __init__(self, n_players, network_info, device):
+        super().__init__()
+        self.n_players = n_players
+        self.device = device
+        action_size = n_players + 4
+        self.acnn = AdaptiveCNN(
+            aux_info_size = action_size + TILE_ENCODING_SIZE + n_players*(TILE_ENCODING_SIZE+1), 
+            in_channels = 9, 
+            conv_channels = network_info['conv_channels'], 
+            conv_kernel_size = network_info['conv_kernel_size'], 
+            conv_stride = network_info['conv_stride'], 
+            l = network_info['conv_l'], 
+            pool_place = network_info['pool_place'], 
+            pool_kernel_size = network_info['pool_kernel_size'], 
+            pool_stride = network_info['pool_stride'], 
+            FMN_l = network_info['FMN_l'], 
+            FMN_n = network_info['FMN_n'])
+        self.fc = NeuralNetwork(144, 1, network_info['fc_l'], network_info['fc_n'])
+        
+    # x still a dictionary of tensor
+    def forward(self, x, action):
+        with torch.no_grad():
+            batch_size = x['Boards'].shape[0]
+            current_tiles_vector = get_current_tiles_vector(x, self.n_players, self.device)
+            # flatten the different tiles
+            current_tiles_vector = current_tiles_vector.reshape(batch_size,-1)
+            previous_tile_vector = tile2onehot(x['Previous tiles'], self.n_players, self.device)[:,0]
+            boards = boards2onehot(x, self.n_players, self.device)[:,0]
+            if batch_size == 1:
+                current_tiles_vector = current_tiles_vector.repeat(repeats=(action.size(dim=0),1))
+                previous_tile_vector = previous_tile_vector.repeat(repeats=(action.size(dim=0),1))
+                boards = boards.repeat(repeats=(action.size(dim=0),1,1,1))
+            aux_information = torch.cat([action, current_tiles_vector, previous_tile_vector],dim=1)
+        # action.size(dim=0) can be the batch_size in case we are getting Q values of different (state,action)
+        # or the number of possible actions if we are choosing the best action
+        x = self.acnn(boards, aux_information).reshape(action.size(dim=0), -1)
+        x = self.fc(x)
+        return x
+
 class CNN(nn.Module):
     def __init__(self,
                  in_channels,
@@ -34,22 +171,27 @@ class CNN(nn.Module):
                  ):
         super(CNN, self).__init__()
         
-        layers = [nn.Conv2d(
-            in_channels = in_channels,
-            out_channels = conv_channels,
-            kernel_size = conv_kernel_size,
-            stride = conv_stride)
-            ]
+        layers = []
         for i in range(l):
-            layers.append(nn.ReLU())
+            layers.append(nn.Conv2d(
+                in_channels = in_channels,
+                out_channels = conv_channels[i],
+                kernel_size = conv_kernel_size[i],
+                stride = conv_stride[i]))
+            layers.append(nn.SELU())
             if pool_place[i] != 0:
                 layers.append(nn.MaxPool2d(
                     kernel_size = pool_kernel_size,
                     stride = pool_stride))
+            in_channels = conv_channels[i]    
+            
         self.layers = nn.ModuleList(layers)
         
     def forward(self, x):
         for layer in self.layers:
+            if isinstance(layer, nn.Conv2d):
+                pad = layer.kernel_size[0]//2
+                x = F.pad(x, (pad,pad,pad,pad), 'constant', -1) # pad each dimensions
             x = layer(x)
         return x
 
@@ -68,15 +210,13 @@ class BoardNetwork(nn.Module):
             pool_stride = network_info['pool_stride']
             )
         self.fc = NeuralNetwork(
-            input_size = 810, # modify according to error...or compute conv accordingly
+            input_size = 405, # modify according to error...or compute conv accordingly
             output_size = network_info['board_rep_size'],
             n = network_info['board_fc_n'],
             l = network_info['board_fc_l'])
         
-        
     # x : [batch_size, 2, 9, 9]
     def forward(self, x):
-        x = F.pad(x, (2,2,2,2), 'constant', -1) # pad each dimensions
         x = self.cnn(x)
         x = torch.flatten(x, 1)
         x = self.fc(x)
@@ -90,7 +230,7 @@ class PlayerNetwork(nn.Module):
         super(PlayerNetwork, self).__init__()
         
         self.board_network = BoardNetwork(
-            n_inputs=N_TILE_TYPES+1,
+            n_inputs=N_TILE_TYPES+3,
             network_info=network_info)
         
         self.join_info_network = NeuralNetwork(
@@ -105,6 +245,51 @@ class PlayerNetwork(nn.Module):
         x = self.join_info_network(x)
         return x
         
+# Assumes the observation at 0 is current player
+# Additional information : taken or not, and by whom
+def get_current_tiles_vector(x, n_players, device):
+    batch_size = x['Boards'].size()[0]
+    current_tiles_info = torch.zeros([
+        batch_size,
+        n_players,
+        TILE_ENCODING_SIZE+1],
+        device=device)
+    current_tiles_info[:,:,:-1] = tile2onehot(x['Current tiles'][:,:,:-1], n_players, device)
+    current_tiles_info[:,:,-1] = x['Current tiles'][:,:,-1]
+    return current_tiles_info
+
+def tile2onehot(tiles, n_players, device):
+    batch_size = tiles.size()[0]
+    tiles_info = torch.zeros([
+        batch_size,
+        n_players,
+        TILE_ENCODING_SIZE],
+        device=device)
+    tiles_info[:,:,-1] = tiles[:,:,-1] # Value
+    # +1 for empty (previous tile first round and current tiles last round)
+    tiles_info[:,:,-3:-1] = tiles[:,:,-3:-1] # Crowns
+    tiles_info[:,:,:N_TILE_TYPES+1] = F.one_hot(tiles[:,:,0], num_classes=N_TILE_TYPES+1)
+    tiles_info[:,:,N_TILE_TYPES+1:-3] = F.one_hot(tiles[:,:,1], num_classes=N_TILE_TYPES+1)
+    return tiles_info
+    #return prev_tiles_info.reshape(self.batch_size, -1)
+
+# x['Boards'] : (batch_size, n_players, 2, 9, 9)
+# Returns : (batch_size, n_players, N_TILE_TYPES+2, 9, 9)
+def boards2onehot(x, n_players, device):
+    batch_size = x['Boards'].size()[0]
+    board_size = x['Boards'].size()[-1]
+    ## BOARDS
+    # (N_TILE_TYPES) + 3 : crown + empty tiles + center
+    boards_one_hot = torch.zeros([
+        batch_size,
+        n_players,
+        N_TILE_TYPES+3,
+        board_size,board_size],
+        device=device)
+    boards_one_hot.scatter_(2, (x['Boards'][:,:,0]+2).unsqueeze(2), 1)
+    boards_one_hot[:,:,-1,:,:] = x['Boards'][:,:,1] # Place crowns at the end
+    return boards_one_hot
+
 
 class Shared(nn.Module):
     def __init__(
@@ -114,6 +299,7 @@ class Shared(nn.Module):
         self.network_info = network_info
         self.device = device
         
+        self.other_players_network = PlayerNetwork(network_info)
         self.player_network = PlayerNetwork(network_info)
         
         shared_input_size = \
@@ -125,58 +311,14 @@ class Shared(nn.Module):
             l=self.network_info['shared_l'], 
             n=self.network_info['shared_n'])
 
-    # x['Boards'] : (batch_size, n_players, 2, 9, 9)
-    # Returns : (batch_size, n_players, N_TILE_TYPES+2, 9, 9)
-    def boards2onehot(self, x):
-        batch_size = x['Boards'].size()[0]
-        board_size = x['Boards'].size()[-1]
-        ## BOARDS
-        # (N_TILE_TYPES) + 2 : crown + empty tiles
-        boards_one_hot = torch.zeros([
-            batch_size,
-            self.n_players,
-            N_TILE_TYPES+2,
-            board_size,board_size],
-            device=self.device)
-        boards_one_hot.scatter_(2, (x['Boards'][:,:,0]+2).unsqueeze(2), 1)
-        boards_one_hot = boards_one_hot[:,:,1:] # Exclude center matrices
-        boards_one_hot[:,:,-1,:,:] = x['Boards'][:,:,1] # Place crowns at the end
-        return boards_one_hot
 
-    def tile2onehot(self, tiles):
-        batch_size = tiles.size()[0]
-        tiles_info = torch.zeros([
-            batch_size,
-            self.n_players,
-            TILE_ENCODING_SIZE],
-            device=self.device)
-        tiles_info[:,:,-1] = tiles[:,:,-1] # Value
-        # +1 for empty (previous tile first round and current tiles last round)
-        tiles_info[:,:,-3:-1] = tiles[:,:,-3:-1] # Crowns
-        tiles_info[:,:,:N_TILE_TYPES+1] = F.one_hot(tiles[:,:,0], num_classes=N_TILE_TYPES+1)
-        tiles_info[:,:,N_TILE_TYPES+1:-3] = F.one_hot(tiles[:,:,1], num_classes=N_TILE_TYPES+1)
-        return tiles_info
-        #return prev_tiles_info.reshape(self.batch_size, -1)
-    
-    # Assumes the observation at 0 is current player
-    # Additional information : taken or not, and by whom
-    def current_tiles_vector(self, x):
-        batch_size = x['Boards'].size()[0]
-        current_tiles_info = torch.zeros([
-            batch_size,
-            self.n_players,
-            TILE_ENCODING_SIZE+1],
-            device=self.device)
-        current_tiles_info[:,:,:-1] = self.tile2onehot(x['Current tiles'][:,:,:-1])
-        current_tiles_info[:,:,-1] = x['Current tiles'][:,:,-1]
-        return current_tiles_info
     
     # Assumes the observation at 0 is current player
     def players_vector(self, x):
         with torch.no_grad():
             batch_size = x['Boards'].size()[0]
             boards_one_hot = self.boards2onehot(x)
-            previous_tile_one_hot = self.tile2onehot(x['Previous tiles'])
+            previous_tile_one_hot = tile2onehot(x['Previous tiles'], self.n_players, self.device)
             
         players_output = torch.zeros([
             batch_size,
@@ -184,10 +326,12 @@ class Shared(nn.Module):
             self.network_info['player_rep_size']],
             device=self.device)
         # TODO : parallelize this ?
+        network = self.player_network
         for i in range(self.n_players):
-            players_output[:,i] = self.player_network(
+            players_output[:,i] = network(
                 board=boards_one_hot[:,i],
                 previous_tile=previous_tile_one_hot[:,i])
+            network = self.other_players_network
         return players_output.reshape(batch_size, -1)
 
     # equivalence of players not taken into account (ideally should share weights) 
@@ -195,7 +339,7 @@ class Shared(nn.Module):
         batch_size = x['Boards'].size()[0]
         players_vector = self.players_vector(x).reshape(batch_size, -1)
         with torch.no_grad():
-            current_tiles_vector = self.current_tiles_vector(x)
+            current_tiles_vector = get_current_tiles_vector(x, self.n_players, self.device)
         x = torch.cat([players_vector, current_tiles_vector.reshape(batch_size,-1)], dim=1)
         x = self.shared_network(x)
         return x
@@ -203,8 +347,23 @@ class Shared(nn.Module):
 #%%
 
 if __name__ == "__main__":
-
-    s = Shared(3,2,10,20,30)
+    hp = {'player_rep_size':50,
+          'shared_l':3,
+          'shared_n':100,
+          'conv_channels':[32,16,5],
+          'conv_l':3,
+          'conv_kernel_size':[3,3,3],
+          'conv_stride':[1,1,1],
+          'pool_place':[0,0,0],
+          'pool_kernel_size':None,
+          'pool_stride':None,
+          'board_rep_size':100,
+          'board_fc_n':100,
+          'board_fc_l':1, 
+          'player_rep_size':100,
+          'board_prev_tile_fc_l':1,
+          'shared_rep_size':100}
+    s = Shared(n_players=2,output_size=10, network_info=hp, device='cpu')
     boards = torch.zeros([3, 2, 2, 3, 3])
     boards[:,:,0] = torch.randint(
         low=-1,
