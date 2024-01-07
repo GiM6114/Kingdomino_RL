@@ -12,50 +12,12 @@ import agent
 from printer import Printer
 import run
 from graphics import draw_obs
+from models_directory_utils import start
+from networks import TILE_ENCODING_SIZE
+from prioritized_experience_replay import PrioritizedReplayBuffer
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 print(f'Device used: {device}')
-
-def find_available_directory_name(path, base_name):
-    i = 1
-    while os.path.exists(os.path.join(path, f'{base_name}_{i}')):
-        i += 1
-    return f'{base_name}_{i}'
-
-def create_directory(path, base_directory_name):
-    directory_name = find_available_directory_name(path, base_directory_name)
-    directory_path = os.path.join(path, directory_name)
-    os.makedirs(directory_path)
-    return directory_path
-
-def write_hyperparameters(directory_path, parameters_dict):
-    file_path = os.path.join(directory_path, 'hyperparameters.txt')
-    with open(file_path, 'w') as file:
-        for key, value in parameters_dict.items():
-            file.write(f'{key}: {value}\n')
-    print(f'Hyperparameter file created at path {file_path}')
-
-def read_hyperparameters(file_path):
-    hyperparameters = {}
-    with open(file_path, 'r') as file:
-        for line in file:
-            key, value = line.strip().split(': ')
-            hyperparameters[key] = eval(value)
-    return hyperparameters
-
-def find_highest_numbered_directory(directory):
-    highest_number = 0
-    highest_directory = ''
-    for directory_name in os.listdir(f'{directory}/.'):
-            try:
-                number = int(directory_name)
-                if number > highest_number:
-                    highest_number = number
-                    highest_directory = directory_name
-            except ValueError:
-                # Ignore directories that don't match the expected pattern
-                pass
-    return os.path.join(directory, highest_directory), highest_number
 
 #%%
 
@@ -118,7 +80,6 @@ hp = {'batch_size':128,
       'fc_n':[128,128]
       }
 
-# TODO : adaptive cnn, learn network taking input context, output convolutional layer weights  
   
 # player_1.policy.load_state_dict(torch.load(os.getcwd()+'/Models/20_100'))
 # player_1.target.load_state_dict(torch.load(os.getcwd()+'/Models/20_100'))
@@ -138,35 +99,29 @@ hp = {'batch_size':128,
 #           train_rewards.npy
 #           scores_vs_random.npy
 if __name__ == '__main__':
-    continue_training = False
-    n_episodes_done = 0
-    models_dir = 'Models'
-    model_id = int(input('Id of model to train ?'))
-    if os.path.exists(os.path.join(models_dir, f'Model_{model_id}')):
-        model_dir_path = os.path.join(models_dir, f'Model_{model_id}')
-        hp = read_hyperparameters(model_dir_path + '/hyperparameters.txt')
-        choice = int(input('Create new model (1) or continue training (2) ?'))
-        if choice == 1:
-            training_dir_path = create_directory(model_dir_path, 'Training')
-        elif choice == 2:
-            training_id = int(input('Which training to continue ?'))
-            training_dir_path = os.path.join(model_dir_path, 'Training_'+str(training_id))
-            trained_dir_path,n_episodes_done = find_highest_numbered_directory(training_dir_path)
-            if n_episodes_done != 0:
-                continue_training = True
-    else:
-        model_dir_path = create_directory(models_dir, 'Model')
-        write_hyperparameters(model_dir_path, hp)
-        training_dir_path = os.path.join(model_dir_path, 'Training_1')
+    n_players = 2
+    continue_training, trained_dir_path, training_dir_path, n_episodes_done = start()
 
-    
+    n_players_input = 1 if 'PlayerFocused' in network_names[hp['network_name_id']] else n_players
+    # first dim depends on player focused or not
+    boards_state_size = (n_players_input,9,9,9)
+    # previous tiles + current_tiles
+    tiles_state_size = TILE_ENCODING_SIZE*n_players_input + (TILE_ENCODING_SIZE+1)*n_players
+    action_size = n_players+4
+    memory = PrioritizedReplayBuffer(
+        boards_state_size=boards_state_size,
+        tiles_state_size=tiles_state_size,
+        action_size=action_size,
+        buffer_size=hp['replay_memory_size'],
+        device=device)
+
+
     eps_scheduler = EpsilonDecayRestart(
         eps_start=hp['eps_start'],
         eps_end=hp['eps_end'],
         eps_decay=hp['eps_decay'],
         eps_restart=hp['eps_restart'],
         eps_restart_threshold=hp['eps_restart_threshold'])
-    n_players = 2
     player_1 = agent.DQN_Agent(
         n_players=n_players,
         network_name=network_names[hp['network_name_id']],
@@ -176,7 +131,7 @@ if __name__ == '__main__':
         tau=hp['tau'], 
         gamma=hp['gamma'],
         lr=hp['lr'],
-        replay_memory_size=hp['replay_memory_size'],
+        memory=memory,
         device=device,
         id=0)
     

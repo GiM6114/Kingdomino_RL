@@ -19,6 +19,8 @@ from setup import N_TILE_TYPES
 from networks import Shared, NeuralNetwork, PlayerFocusedACNN
 from printer import Printer
 from graphics import draw_obs
+from prioritized_experience_replay import PrioritizedReplayBuffer
+from encoding import boards2onehot, get_current_tiles_vector, tile2onehot, actions2onehot
 
 class HumanPlayer:      
     def action(self, state, kingdomino):
@@ -54,7 +56,8 @@ class ReplayMemory(object):
     
 class DQN_Agent:
     def __init__(self, 
-                 n_players, 
+                 n_players,
+                 exploration_batch_size,
                  batch_size,
                  eps_scheduler,
                  tau,
@@ -68,6 +71,8 @@ class DQN_Agent:
                  policy=None,
                  target=None,
                  memory=None):
+        # should be 1 but let's keep it general
+        self.exploration_batch_size = exploration_batch_size
         self.batch_size = batch_size
         self.eps_scheduler = eps_scheduler
         self.tau = tau
@@ -96,8 +101,6 @@ class DQN_Agent:
         self.optimizer = torch.optim.AdamW(self.policy.parameters(), lr=lr, amsgrad=True)
         self.criterion = nn.SmoothL1Loss()
         self.memory = memory
-        if self.memory is None:
-            self.memory = ReplayMemory(replay_memory_size)
         self.learning = True
         self.reset()
     
@@ -105,30 +108,21 @@ class DQN_Agent:
         self.n_steps = 0
         self.prev_state = None
         self.prev_action = None
-        
-    def convert_state_torch(self, state):
-        if state is None or torch.is_tensor(state['Boards']):
-            return state
-        for k in state:
-            state[k] = torch.tensor(
-                state[k], device=self.device, dtype=torch.int64).unsqueeze(0)
-        return state
     
-    def convert_actions_torch(self, actions):
-        if actions is None:
-            return None
-        actions_conc = [np.concatenate(([action[0]],action[1].reshape(1,-1).squeeze())) for action in actions]
-        # convert first action nb to one_hot
-        actions_conc = torch.tensor(np.array(actions_conc), device=self.device, dtype=torch.int64)
-        actions_conc_one_hot_tile_id = \
-            torch.zeros((actions_conc.size()[0], self.n_players+2+2), device=self.device, dtype=torch.int64)
-        actions_conc_one_hot_tile_id[:,self.n_players:] = actions_conc[:,1:]
-        actions_conc_one_hot_tile_id[:,:self.n_players] = F.one_hot(actions_conc[:,0], num_classes=self.n_players)
-        return actions_conc_one_hot_tile_id
+    # state : dict['Boards','Previous tiles','Current tiles']
+    def action(self, state, kingdomino):
+                
+        state = self.convert_state_torch(state)
+        self.prev_state = state
+        action,action_torch = self.select_action(state, kingdomino)
+        self.prev_action = action_torch
+        return action
     
+    # TODO: stuff to do here
     def select_action(self, state, kingdomino):
         actions = kingdomino.getPossibleActions()
-        actions_torch = self.convert_actions_torch(actions)
+        actions_torch = actions2onehot(actions, self.n_players, self.device)
+        boards,aux = self.policy.state2tensors(state, actions_torch.shape[0])
         if state is None:
             return None,None
         if self.learning:
@@ -142,26 +136,22 @@ class DQN_Agent:
         i = random.randint(0, len(actions)-1)
         return actions[i],actions_torch[i]
     
-    def action(self, state, kingdomino):
-        state = self.convert_state_torch(state)
-        self.prev_state = state
-        action,action_torch = self.select_action(state, kingdomino)
-        self.prev_action = action_torch
-        return action
+
         
     def give_reward(self, reward, next_state, possible_actions):
         # print('Previous state:')
         # display(draw_obs(self.prev_state))
         # print('State:')
         # display(draw_obs(next_state))
-        self.memory.push(
+        self.memory.push((
             self.prev_state, 
             self.prev_action.unsqueeze(0),
             torch.tensor([reward], device=self.device, dtype=torch.float32),
             self.convert_state_torch(next_state),
-            self.convert_actions_torch(possible_actions))
+            self.convert_actions_torch(possible_actions)))
         self.optimize()
         
+    # might need to rearrange this a bit
     def optimize(self):
         if len(self.memory) < self.batch_size:
             return
@@ -176,9 +166,7 @@ class DQN_Agent:
         action_batch = torch.cat(batch.action)
         reward_batch = torch.cat(batch.reward)
         state_batch = self.listdict2dicttensor(state_batch_listdict)
-        #non_final_next_states = self.listdict2dicttensor(non_final_next_states)
         possible_actions_batch = batch.possible_actions
-        #non_final_possible_actions_batch = [a for (s,a) in zip(batch.next_state, batch.possible_actions) if s is not None]
 
         state_action_values = self.policy(state_batch, action_batch).squeeze()
         
@@ -189,22 +177,22 @@ class DQN_Agent:
             # TODO: god awful loop, but problem bcs possible actions take different shapes you see
             # Perhaps should fill in with 0s and ignore the results of those
             for i,(state,actions) in enumerate(zip(next_states,possible_actions_batch)):
-                print('STATE :')
-                display(draw_obs(state_batch_listdict[i]))
-                print('ACTION :')
-                print(action_batch[i])
-                print('REWARD :')
-                print(reward_batch[i])
+                # print('STATE :')
+                # display(draw_obs(state_batch_listdict[i]))
+                # print('ACTION :')
+                # print(action_batch[i])
+                # print('REWARD :')
+                # print(reward_batch[i])
                 if state is None:
                     # print('Next state is None')
                     continue
                 values = self.target(state, actions).squeeze()
                 next_state_values[i] = values.max()
-                print('NEXT STATE :')
-                display(draw_obs(state))
-                print('POSSIBLE ACTIONS :', actions)
-                print('VALUES :', values)
-                print('MAX VALUES :', values.max())
+                # print('NEXT STATE :')
+                # display(draw_obs(state))
+                # print('POSSIBLE ACTIONS :', actions)
+                # print('VALUES :', values)
+                # print('MAX VALUES :', values.max())
         expected_state_action_values = (next_state_values * self.gamma) + reward_batch
         loss = self.criterion(state_action_values, expected_state_action_values)
         self.optimizer.zero_grad()

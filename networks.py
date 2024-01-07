@@ -4,6 +4,7 @@ import torch.nn.functional as F
 import torch
 
 from setup import N_TILE_TYPES, TILE_SIZE
+from encoding import boards2onehot, get_current_tiles_vector, tile2onehot
 
 # 2*N_TILE_TYPES + 2 + 1 : one hot encoded tiles + crowns + value of tile
 TILE_ENCODING_SIZE = 2*(N_TILE_TYPES+1) + 2 + 1
@@ -142,12 +143,13 @@ class PlayerFocusedACNN(nn.Module):
             FMN_l = network_info['FMN_l'], 
             FMN_n = network_info['FMN_n'])
         self.fc = NeuralNetwork(144, 1, network_info['fc_l'], network_info['fc_n'])
-        
-    # x still a dictionary of tensor
-    def forward(self, x, action):
-        with torch.no_grad():
-            batch_size = x['Boards'].shape[0]
-            current_tiles_vector = get_current_tiles_vector(x, self.n_players, self.device)
+    
+    def state2tensors(self, state, actions_size):
+        # action.size(dim=0) can be the batch_size in case we are getting Q values of different (state,action)
+        with torch.no_grad:
+            batch_size = state['Boards'].shape[0]
+            current_tiles_vector = get_current_tiles_vector(
+                state['Current tiles'], self.n_players, self.device)
             # flatten the different tiles
             current_tiles_vector = current_tiles_vector.reshape(batch_size,-1)
             previous_tile_vector = tile2onehot(x['Previous tiles'], self.n_players, self.device)[:,0]
@@ -156,8 +158,11 @@ class PlayerFocusedACNN(nn.Module):
                 current_tiles_vector = current_tiles_vector.repeat(repeats=(action.size(dim=0),1))
                 previous_tile_vector = previous_tile_vector.repeat(repeats=(action.size(dim=0),1))
                 boards = boards.repeat(repeats=(action.size(dim=0),1,1,1))
-            aux_information = torch.cat([action, current_tiles_vector, previous_tile_vector],dim=1)
-        # action.size(dim=0) can be the batch_size in case we are getting Q values of different (state,action)
+        return boards, aux
+    
+    # x still a dictionary of tensor
+    def forward(self, x, action):
+        aux = torch.cat([action, current_tiles_vector, previous_tile_vector],dim=1)
         # or the number of possible actions if we are choosing the best action
         x = self.acnn(boards, aux_information).reshape(action.size(dim=0), -1)
         x = self.fc(x)
@@ -245,50 +250,6 @@ class PlayerNetwork(nn.Module):
         x = self.join_info_network(x)
         return x
         
-# Assumes the observation at 0 is current player
-# Additional information : taken or not, and by whom
-def get_current_tiles_vector(x, n_players, device):
-    batch_size = x['Boards'].size()[0]
-    current_tiles_info = torch.zeros([
-        batch_size,
-        n_players,
-        TILE_ENCODING_SIZE+1],
-        device=device)
-    current_tiles_info[:,:,:-1] = tile2onehot(x['Current tiles'][:,:,:-1], n_players, device)
-    current_tiles_info[:,:,-1] = x['Current tiles'][:,:,-1]
-    return current_tiles_info
-
-def tile2onehot(tiles, n_players, device):
-    batch_size = tiles.size()[0]
-    tiles_info = torch.zeros([
-        batch_size,
-        n_players,
-        TILE_ENCODING_SIZE],
-        device=device)
-    tiles_info[:,:,-1] = tiles[:,:,-1] # Value
-    # +1 for empty (previous tile first round and current tiles last round)
-    tiles_info[:,:,-3:-1] = tiles[:,:,-3:-1] # Crowns
-    tiles_info[:,:,:N_TILE_TYPES+1] = F.one_hot(tiles[:,:,0], num_classes=N_TILE_TYPES+1)
-    tiles_info[:,:,N_TILE_TYPES+1:-3] = F.one_hot(tiles[:,:,1], num_classes=N_TILE_TYPES+1)
-    return tiles_info
-    #return prev_tiles_info.reshape(self.batch_size, -1)
-
-# x['Boards'] : (batch_size, n_players, 2, 9, 9)
-# Returns : (batch_size, n_players, N_TILE_TYPES+2, 9, 9)
-def boards2onehot(x, n_players, device):
-    batch_size = x['Boards'].size()[0]
-    board_size = x['Boards'].size()[-1]
-    ## BOARDS
-    # (N_TILE_TYPES) + 3 : crown + empty tiles + center
-    boards_one_hot = torch.zeros([
-        batch_size,
-        n_players,
-        N_TILE_TYPES+3,
-        board_size,board_size],
-        device=device)
-    boards_one_hot.scatter_(2, (x['Boards'][:,:,0]+2).unsqueeze(2), 1)
-    boards_one_hot[:,:,-1,:,:] = x['Boards'][:,:,1] # Place crowns at the end
-    return boards_one_hot
 
 
 class Shared(nn.Module):
