@@ -1,4 +1,5 @@
 from PIL import Image, ImageDraw
+import torch
 
 type2color = [
     'orange',
@@ -14,14 +15,46 @@ type2color = [
 img_size = 400
 separation_size = 10
 
-def draw_obs(obs):
+# only for single player as of yet
+# e : {'Boards':(n_players*9*9*9), 'Current tiles':(n_players,18)
+def encoded_to_original(e):
+    e = {'Boards':e[0],'Current tiles':e[1], 'Previous tiles':e[2]}
+    n_players_board = e['Boards'].shape[0]
+    board = torch.zeros([n_players_board,2,9,9])
+    board[:,1] = e['Boards'][:,-1] # crowns
+    for p in range(n_players_board):
+        for c in range(8):
+            for i in range(9):
+                for j in range(9):
+                    if e['Boards'][p,c,i,j] == 1:
+                        board[p,0,i,j] = c-2
+    
+    n_players = e['Current tiles'].shape[0] // 18
+    cur_tile = torch.zeros([n_players,6])
+    reshaped_current_tiles = e['Current tiles'].reshape(n_players,18)
+    cur_tile[:,0] = torch.argmax(reshaped_current_tiles[:,:7],dim=1)
+    cur_tile[:,1] = torch.argmax(reshaped_current_tiles[:,7:14],dim=1)
+    cur_tile[:,2:] = reshaped_current_tiles[:,14:]
+    
+    n_players_prev = e['Previous tiles'].shape[0] // 17
+    prev_tile = torch.zeros([n_players_prev,5])
+    reshaped_previous_tiles = e['Previous tiles'].reshape(n_players_prev,17)
+    prev_tile[:,0] = torch.argmax(reshaped_previous_tiles[:,:7],dim=1)
+    prev_tile[:,1] = torch.argmax(reshaped_previous_tiles[:,7:14],dim=1)
+    prev_tile[:,2:] = reshaped_previous_tiles[:,14:]
+            
+    return {'Boards':board, 'Current tiles':cur_tile, 'Previous tiles':prev_tile}
+
+def draw_encoded_state(obs):
     if obs is None:
         print('None')
         return
-    obs = obs.copy()
-    for key in obs:
-        obs[key] = obs[key].squeeze()
-    n_players = obs['Boards'].shape[0]
+    obs = encoded_to_original(obs)
+    return draw_obs(obs)
+
+# TODO: has to know the type of encoding to draw properly
+def draw_obs(obs):
+    n_players = obs['Current tiles'].shape[0]
     img = Image.new("RGB", (img_size,img_size), "white")
     board_size = (img_size-(separation_size*(n_players+1))) // n_players
 

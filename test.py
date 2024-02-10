@@ -70,12 +70,60 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 
-direc = 'D:\GitHub\Kingdomino_RL\Models\Model_2\Training_1'
-n = 100
+direc = 'C:/Users/hugom/OneDrive/Documents/ProjetProg/KingdominoAgent/Kingdomino_RL/Models/Model_3/Training_1'
+n = 20
 s = np.zeros((n,100,2))
 r = np.zeros((n,100,2))
 for i in range(1,n+1):
     s[i-1] = np.load(os.path.join(direc, str(i*100), 'scores_vs_random.npy'))
     r[i-1] = np.load(os.path.join(direc, str(i*100), 'train_rewards.npy'))
-plt.plot(s.mean(1)[:,0])
-plt.plot(r.mean(1)[:,0])
+plt.plot(s.mean(1)[:,0], color='blue')
+plt.plot(r.mean(1)[:,0], color='red')
+
+#%%
+
+from run import test
+from kingdomino import Kingdomino
+import agent
+
+player_1 = agent.SelfCenteredPlayer()
+player_2 = agent.SelfCenteredPlayer()
+players = [player_1, player_2]
+env = Kingdomino(
+    players=players)
+test(env, players, 1, 2)
+
+scores = test(env, players, 100, 1, 10)
+
+#%%
+import pickle
+import graphics
+from IPython.core.display import Image, display
+from einops import rearrange
+s = 'C:/Users/hugom/OneDrive/Documents/ProjetProg/KingdominoAgent/Kingdomino_RL/Models/Model_4/Training_1/1300/memory.pkl'
+# s = s.replace('/','\\')
+with open(s,'rb') as f:
+    m = pickle.load(f)
+samples = m.sample(min(100,len(m)))
+for i in range(100):
+    print('------- NEW SAMPLE --------')
+    board = samples[0][i]
+    cur_tiles = samples[1][i]
+    prev_tile = samples[2][i]
+    action = samples[3][i]
+    reward = samples[4][i]
+    next_board = samples[5][i]
+    next_cur_tiles = samples[6][i]
+    next_prev_tile = samples[7][i]
+    done = samples[8][i]
+    next_actions = samples[9][i]
+
+    obs = (board, cur_tiles, prev_tile)
+    display(graphics.draw_encoded_state(obs))
+    print(action)
+    print(reward)
+    next_obs = (next_board, next_cur_tiles, next_prev_tile)
+    display(graphics.draw_encoded_state(next_obs))
+    print(next_actions)
+
+

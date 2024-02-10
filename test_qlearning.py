@@ -14,7 +14,7 @@ import run
 from graphics import draw_obs
 from models_directory_utils import start
 from networks import TILE_ENCODING_SIZE
-from prioritized_experience_replay import PrioritizedReplayBuffer
+from prioritized_experience_replay import ReplayBuffer, PrioritizedReplayBuffer
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 print(f'Device used: {device}')
@@ -53,31 +53,32 @@ print(f'Device used: {device}')
 network_names = ['PlayerFocusedACNN']
 reward_fns = [kingdomino.player_focused_reward]
 
-hp = {'batch_size':128,
+hp = {'batch_size':512,
       'tau':0.005,
       'gamma':0.99999,
       'lr':1e-4,
-      'replay_memory_size':30000,
+      'replay_memory_size':50000,
+      'PER':False,
       'reward_name_id':0,
       # Exploration
       'eps_start':0.9,
       'eps_end':0.01,
-      'eps_decay':2500,
-      'eps_restart_threshold':0.05,
-      'eps_restart':0.2,
+      'eps_decay':5000,
+      'eps_restart_threshold':0.0175,
+      'eps_restart':0.5,
       # Architecture
       'network_name_id':0,
-      'conv_channels':[16,8,4],
+      'conv_channels':[8,4,2],
       'conv_l':3,
       'conv_kernel_size':[3,3,3],
       'conv_stride':[1,1,1],
-      'pool_place':[1,1,1],
+      'pool_place':[0,0,0],
       'pool_kernel_size':[2,2,2],
       'pool_stride':[1,1,1],
       'FMN_l':2,
-      'FMN_n':[64,64],
+      'FMN_n':[32,64],
       'fc_l':2,
-      'fc_n':[128,128]
+      'fc_n':[64,32]
       }
 
   
@@ -100,20 +101,30 @@ hp = {'batch_size':128,
 #           scores_vs_random.npy
 if __name__ == '__main__':
     n_players = 2
-    continue_training, trained_dir_path, training_dir_path, n_episodes_done = start()
+    continue_training, trained_dir_path,\
+        training_dir_path, n_episodes_done, hp = start(hp)
 
     n_players_input = 1 if 'PlayerFocused' in network_names[hp['network_name_id']] else n_players
     # first dim depends on player focused or not
-    boards_state_size = (n_players_input,9,9,9)
     # previous tiles + current_tiles
-    tiles_state_size = TILE_ENCODING_SIZE*n_players_input + (TILE_ENCODING_SIZE+1)*n_players
     action_size = n_players+4
-    memory = PrioritizedReplayBuffer(
-        boards_state_size=boards_state_size,
-        tiles_state_size=tiles_state_size,
-        action_size=action_size,
-        buffer_size=hp['replay_memory_size'],
-        device=device)
+    
+    if hp['PER']:
+        memory = PrioritizedReplayBuffer(
+            boards_state_size=(n_players_input,9,9,9),
+            cur_tiles_state_size=(TILE_ENCODING_SIZE+1)*n_players,
+            prev_tiles_state_size=TILE_ENCODING_SIZE*n_players_input,
+            action_size=action_size,
+            buffer_size=hp['replay_memory_size'],
+            device=device)
+    else:
+        memory = ReplayBuffer(
+            boards_state_size=(n_players_input,9,9,9),
+            cur_tiles_state_size=(TILE_ENCODING_SIZE+1)*n_players,
+            prev_tiles_state_size=TILE_ENCODING_SIZE*n_players_input,
+            action_size=action_size,
+            buffer_size=hp['replay_memory_size'],
+            device=device)
 
 
     eps_scheduler = EpsilonDecayRestart(
@@ -122,6 +133,7 @@ if __name__ == '__main__':
         eps_decay=hp['eps_decay'],
         eps_restart=hp['eps_restart'],
         eps_restart_threshold=hp['eps_restart_threshold'])
+    
     player_1 = agent.DQN_Agent(
         n_players=n_players,
         network_name=network_names[hp['network_name_id']],
@@ -166,7 +178,7 @@ if __name__ == '__main__':
     #%%
 
     Printer.activated = False
-    n_itrs = 50
+    n_itrs = 150
     n_train_episodes = 100
     n_test_episodes = 100
     train_rewards = np.zeros((n_itrs,n_train_episodes,n_players))

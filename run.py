@@ -4,21 +4,28 @@ import numpy as np
 from IPython.core.display import Image, display
 from graphics import draw_obs
 
-def test(env, players, n_episodes, print_every=10):
+def test(env, players, n_episodes, verbose=0, print_every=10):
     for player in players:
         player.learning = False
     n_players = len(players)
     done = False
     scores = np.zeros((n_episodes,n_players))
     for i in range(n_episodes):
-        if i % print_every == 0:
+        if verbose == 1 and i % print_every == 0:
             print('Test episode :', i)
         state = env.reset()
         done = False
         while not done:
             for player_id in env.order:
+                if verbose == 2:
+                    print(f"Player {player_id}'turn")
+                    display(draw_obs(state))
                 action = players[player_id].action(state, env)
+                if verbose == 2:
+                    print(action)
                 state,reward,done,info = env.step(action)
+                if verbose == 2:
+                    display(draw_obs(state))
                 if done:
                     scores[i] = info['Scores']
                     break
@@ -39,10 +46,10 @@ def train(env, players, n_episodes, print_every=10):
         while not done:
             for player_id in env.order:
                 # Give reward of previous move
-                if reward_next_player is not None:
+                if not env.first_turn:
                     # if reward_next_player != 0:
                     #     print('Reward:', reward_next_player)
-                    players[player_id].give_reward(reward_next_player, state, env.getPossibleActions())
+                    players[player_id].give_reward(reward_next_player, state, env.empty_end_turn, env.getPossibleActions())
                     sum_rewards[player_id] += reward_next_player
                 action = players[player_id].action(state, env)
                 state,reward_next_player,done,info = env.step(action) # reward none for first turn

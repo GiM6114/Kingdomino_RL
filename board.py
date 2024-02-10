@@ -51,7 +51,7 @@ class Board:
         Printer.print('Left, right, bottom, top :', self.left_most, self.right_most, self.bottom_most, self.top_most)
         for x in range(x_size):
             for y in range(y_size):
-                if self.getBoard(x,y) == -1:
+                if self.getBoard(x,y) in [-1,-2]:
                     continue
                 nb_squares,nb_crowns = self.computeZone(x, y, board_seen, self.board[x,y])
                 score += nb_squares * nb_crowns
@@ -67,27 +67,36 @@ class Board:
         return score
                 
         
-    def countZones(self):
+    def getTerritories(self):
         x_size,y_size = self.board.shape
-        score = 0
-        board_seen = np.zeros_like(self.board)
+        territories = []
+        board_seen = np.zeros_like(self.board, dtype='int8')
         Printer.print('Left, right, bottom, top :', self.left_most, self.right_most, self.bottom_most, self.top_most)
         for x in range(x_size):
             for y in range(y_size):
-                if self.getBoard(x,y) == -1:
+                if self.getBoard(x,y) in [-1,-2]:
                     continue
-                nb_squares,_ = self.computeZone(x, y, board_seen, self.board[x,y])
-                score += nb_squares
-
-        # The Middle Kingdom
-        if self.isCastleCentered():
-            score += 10
-            
-        # Harmony
-        if self.nb_planks == self.max_planks:
-            score += 5
+                territory = self.getTerritory(x, y, board_seen, self.board[x,y])
+                if len(territory) != 0:           
+                    territories.append((territory,self.board[x,y]))
+        return territories
+    
+    def getTerritory(self, x, y, board_seen, env_type):
+        if self.getBoard(x, y) != env_type or board_seen[x,y] == 1:
+            return []
+        board_seen[x,y] = 1
         
-        return score                
+        add_points = [(x,y)]
+        for i in range(x-1, x+2):
+            for j in range(y-1, y+2):
+                # Get rid of diagonals
+                if i != x and j != y:
+                    continue
+                adjacent_points = self.getTerritory(
+                    i, j, board_seen, env_type)
+                add_points += adjacent_points
+        
+        return add_points
         
     def computeZone(self, x, y, board_seen, env_type):
         if self.getBoard(x, y) != env_type or board_seen[x,y] == 1:

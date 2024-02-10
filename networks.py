@@ -4,10 +4,9 @@ import torch.nn.functional as F
 import torch
 
 from setup import N_TILE_TYPES, TILE_SIZE
-from encoding import boards2onehot, get_current_tiles_vector, tile2onehot
+from encoding import TILE_ENCODING_SIZE, state_encoding
 
-# 2*N_TILE_TYPES + 2 + 1 : one hot encoded tiles + crowns + value of tile
-TILE_ENCODING_SIZE = 2*(N_TILE_TYPES+1) + 2 + 1
+
 
 # use adaptive CNN
 # maybe use different network for current player and other players...
@@ -142,29 +141,30 @@ class PlayerFocusedACNN(nn.Module):
             pool_stride = network_info['pool_stride'], 
             FMN_l = network_info['FMN_l'], 
             FMN_n = network_info['FMN_n'])
-        self.fc = NeuralNetwork(144, 1, network_info['fc_l'], network_info['fc_n'])
+        self.fc = NeuralNetwork(162, 1, network_info['fc_l'], network_info['fc_n'])
     
-    def state2tensors(self, state, actions_size):
-        # action.size(dim=0) can be the batch_size in case we are getting Q values of different (state,action)
-        with torch.no_grad:
-            batch_size = state['Boards'].shape[0]
-            current_tiles_vector = get_current_tiles_vector(
-                state['Current tiles'], self.n_players, self.device)
-            # flatten the different tiles
-            current_tiles_vector = current_tiles_vector.reshape(batch_size,-1)
-            previous_tile_vector = tile2onehot(x['Previous tiles'], self.n_players, self.device)[:,0]
-            boards = boards2onehot(x, self.n_players, self.device)[:,0]
-            if batch_size == 1:
-                current_tiles_vector = current_tiles_vector.repeat(repeats=(action.size(dim=0),1))
-                previous_tile_vector = previous_tile_vector.repeat(repeats=(action.size(dim=0),1))
-                boards = boards.repeat(repeats=(action.size(dim=0),1,1,1))
-        return boards, aux
+    # modifies encoded state so that useless information (related to other players) is not saved into the replay buffer
+    def filter_encoded_state(self, encoded_state):
+        encoded_state['Boards'] = encoded_state['Boards'][:,0]
+        encoded_state['Previous tiles'] = encoded_state['Previous tiles'][:,0]
     
-    # x still a dictionary of tensor
-    def forward(self, x, action):
-        aux = torch.cat([action, current_tiles_vector, previous_tile_vector],dim=1)
-        # or the number of possible actions if we are choosing the best action
-        x = self.acnn(boards, aux_information).reshape(action.size(dim=0), -1)
+    # state: (boards,current_tiles,previous_tiles)
+    # state can be (1 x state_shape), in that case repeat
+    # state can be (b x state_shape) with action (b x action_shape)
+    # state can be (b x state_shape) with action (b*varying x action_shape)
+    def forward(self, state, action):
+        boards,cur_tiles,prev_tiles = state
+        state_batch_size = boards.shape[0]
+        actions_size = action.shape[0] # equal to state_batch_size if optimizing
+        if state_batch_size == 1:
+            # print('State batch size is 1')
+            cur_tiles = cur_tiles.repeat(repeats=(actions_size,1))
+            prev_tiles = prev_tiles.repeat(repeats=(actions_size,1))
+            boards = boards.repeat(repeats=(actions_size,1,1,1))
+        aux = torch.cat([action, cur_tiles, prev_tiles],dim=1)
+        # actions_size: batch size or number of possible actions if we are choosing the best action
+        # print('Aux:',aux)
+        x = self.acnn(boards.float().squeeze(1), aux.float()).reshape(actions_size, -1)
         x = self.fc(x)
         return x
 

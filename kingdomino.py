@@ -53,7 +53,7 @@ def get_delta_current_best(current, scores):
 
 def reward_last_quantitative(kd, terminated):
     if kd.first_turn:
-        return None
+        return 0
     if not kd.empty_end_turn and not (kd.last_turn and kd.current_player_itr == kd.n_players-1):
         return 0
     scores = kd.scores()
@@ -66,7 +66,7 @@ def reward_last_qualitative(kd, terminated):
 # difference between scores
 def reward_each_turn(kd, terminated):
     if kd.first_turn:
-        return None
+        return 0
     scores = kd.scores()
     return get_delta_current_best(kd.current_player_id, scores)
 
@@ -77,7 +77,7 @@ def reward_delta_each_turn(kd, terminated):
     if kd.first_turn:
         kd.prev_scores = np.zeros((kd.n_players,kd.n_players))
         kd.prev_scores[kd.current_player_id] = scores
-        return None
+        return 0
     reward = get_delta_current_best(kd.current_player_id, scores) - \
         get_delta_current_best(kd.current_player_id, kd.prev_scores[kd.current_player_id])
     kd.prev_scores[kd.current_player_id] = scores
@@ -88,7 +88,7 @@ def player_focused_reward(kd, terminated):
     if kd.first_turn:
         kd.prev_scores = np.zeros((kd.n_players,kd.n_players))
         kd.prev_scores[kd.current_player_id] = scores
-        return None
+        return 0
     reward = scores[kd.current_player_id] - kd.prev_scores[kd.current_player_id][kd.current_player_id]
     kd.prev_scores[kd.current_player_id] = scores
     return reward
@@ -123,7 +123,7 @@ class Kingdomino:
                  players=None, 
                  render_mode=None,
                  kingdomino=None,
-                 reward_fn=None):
+                 reward_fn=lambda x,y: 0):
         self.reward_fn = reward_fn
         self.tile_deck = TileDeck()
         self.players = players
@@ -208,13 +208,11 @@ class Kingdomino:
     # Current/Previous tiles : 2 tile type, 2 crowns, 1 which player has chosen it, 1 value of tile
     # Previous tiles : 2 tile type, 2 crowns
     def _get_obs(self):
-        if self.empty_end_turn:
-            return None
-        obs = {'Boards'         : np.zeros([self.n_players,2,9,9]),
-               'Current tiles'  : np.zeros([self.n_players,TILE_SIZE+1]),
-               'Previous tiles' : np.zeros([self.n_players,TILE_SIZE])}
+        obs = {'Boards'         : np.zeros([self.n_players,2,9,9], dtype=np.int64),
+               'Current tiles'  : np.zeros([self.n_players,TILE_SIZE+1], dtype=np.int64),
+               'Previous tiles' : np.zeros([self.n_players,TILE_SIZE], dtype=np.int64)}
         
-        obs['Current tiles'][:,:-1] = np.array([current_tile.tile for current_tile in self.current_tiles])
+        obs['Current tiles'][:,:-1] = np.array([current_tile.tile for current_tile in self.current_tiles], dtype=np.int64)
         obs['Current tiles'][:,-1] = 0
         players = switch(self.players, self.current_player_id, 0)
         for i,player in enumerate(players):
@@ -331,13 +329,14 @@ class Kingdomino:
                 
         return False
     
-    def getPossibleActions(self):
+    def getPossibleActions(self, board=None):
         if self.empty_end_turn:
-            return None
+            return [(0, np.array([[-1,-1],[-1,-1]]))]
         tiles_possible = self.getPossibleTileChoices()
         positions_possible = self.getPossiblePositions(
             tile=self.players[self.current_player_id].previous_tile,
-            every_pos=True)
+            every_pos=True,
+            board=board)
         
         # TODO: speed up using numpy generated cartesian product ?
         actions = list(product(tiles_possible, positions_possible))
@@ -350,10 +349,11 @@ class Kingdomino:
         return [i for i,current_tile in enumerate(self.current_tiles) if current_tile.player_id == -1]
 
     
-    def getPossiblePositions(self, tile, every_pos=False):
+    def getPossiblePositions(self, tile, every_pos=False, board=None):
         if self.first_turn:
             return [self.discard_tile]
-        board = self.players[self.current_player_id].board
+        if board is None:
+            board = self.players[self.current_player_id].board
         available_pos = []
         for i in range(9):
             for j in range(9):
@@ -391,7 +391,7 @@ if __name__ == '__main__':
         players=players,
         reward_fn=player_focused_reward)
 
-    for i in range(2):
+    for i in range(1):
         state = env.reset()
         done = False
         while not done:

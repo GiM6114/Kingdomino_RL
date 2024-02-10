@@ -1,3 +1,5 @@
+import os
+
 def find_available_directory_name(path, base_name):
     i = 1
     while os.path.exists(os.path.join(path, f'{base_name}_{i}')):
@@ -39,7 +41,8 @@ def find_highest_numbered_directory(directory):
                 pass
     return os.path.join(directory, highest_directory), highest_number
 
-def start():
+def start(hp):
+    trained_dir_path = ""
     continue_training = False
     n_episodes_done = 0
     models_dir = 'Models'
@@ -60,4 +63,4 @@ def start():
         model_dir_path = create_directory(models_dir, 'Model')
         write_hyperparameters(model_dir_path, hp)
         training_dir_path = os.path.join(model_dir_path, 'Training_1')
-    return continue_training, trained_dir_path, training_dir_path, n_episodes_done
+    return continue_training, trained_dir_path, training_dir_path, n_episodes_done, hp

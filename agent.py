@@ -4,6 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.distributions as distributions
 import torch
+from torch.nn.utils.rnn import pad_sequence
 torch.autograd.set_detect_anomaly(True)
 from collections import namedtuple,deque
 # from torchviz import make_dot
@@ -18,11 +19,19 @@ from board import Board
 from setup import N_TILE_TYPES
 from networks import Shared, NeuralNetwork, PlayerFocusedACNN
 from printer import Printer
-from graphics import draw_obs
+from graphics import draw_encoded_state
 from prioritized_experience_replay import PrioritizedReplayBuffer
-from encoding import boards2onehot, get_current_tiles_vector, tile2onehot, actions2onehot
+from encoding import state_encoding, actions_encoding
 
-class HumanPlayer:      
+from kingdomino import Kingdomino
+
+#%%
+
+class Player:
+    def action(self, state, kingdomino):
+        pass
+
+class HumanPlayer(Player):      
     def action(self, state, kingdomino):
         tile_id = int(input("Which tile do you choose ?"))
         x1 = int(input("x1 ? "))
@@ -32,7 +41,7 @@ class HumanPlayer:
         return tile_id, np.array([[x1,y1],[x2,y2]])
 
 
-class RandomPlayer:
+class RandomPlayer(Player):
     def action(self, state, kingdomino):
         return kingdomino.getRandomAction()
 
@@ -54,16 +63,17 @@ class ReplayMemory(object):
     def __len__(self):
         return len(self.memory)
     
-class DQN_Agent:
+    
+class DQN_Agent(Player):
     def __init__(self, 
                  n_players,
-                 exploration_batch_size,
                  batch_size,
                  eps_scheduler,
                  tau,
                  lr,
                  gamma,
                  id,
+                 exploration_batch_size=1,
                  network_name=None,
                  hp_archi=None,
                  replay_memory_size=None,
@@ -71,7 +81,7 @@ class DQN_Agent:
                  policy=None,
                  target=None,
                  memory=None):
-        # should be 1 but let's keep it general
+        # should be 1
         self.exploration_batch_size = exploration_batch_size
         self.batch_size = batch_size
         self.eps_scheduler = eps_scheduler
@@ -99,102 +109,174 @@ class DQN_Agent:
                 device=self.device).to(self.device)
             self.target.load_state_dict(self.policy.state_dict())
         self.optimizer = torch.optim.AdamW(self.policy.parameters(), lr=lr, amsgrad=True)
-        self.criterion = nn.SmoothL1Loss()
+        self.criterion = nn.SmoothL1Loss(reduction='none')
         self.memory = memory
         self.learning = True
         self.reset()
     
     def reset(self):
         self.n_steps = 0
-        self.prev_state = None
-        self.prev_action = None
+        self.encoded_prev_state = None
+        self.prev_action = None        
     
     # state : dict['Boards','Previous tiles','Current tiles']
+    # state_encoding : same but one_hot_encoded
     def action(self, state, kingdomino):
-                
-        state = self.convert_state_torch(state)
-        self.prev_state = state
-        action,action_torch = self.select_action(state, kingdomino)
+        encoded_state = state_encoding(state, self.n_players, self.device)
+        self.policy.filter_encoded_state(encoded_state)
+        self.encoded_prev_state = encoded_state
+        action,action_torch = self.select_action(encoded_state, kingdomino)
         self.prev_action = action_torch
         return action
     
-    # TODO: stuff to do here
-    def select_action(self, state, kingdomino):
+    def select_action(self, encoded_state, kingdomino):
         actions = kingdomino.getPossibleActions()
-        actions_torch = actions2onehot(actions, self.n_players, self.device)
-        boards,aux = self.policy.state2tensors(state, actions_torch.shape[0])
-        if state is None:
+        actions_torch = actions_encoding(actions, self.n_players, self.device)
+        if encoded_state is None:
             return None,None
         if self.learning:
             sample = random.random()
             eps_threshold = self.eps_scheduler.eps() 
         if not self.learning or sample > eps_threshold:
             with torch.no_grad():
-                qvalues = self.policy(state, actions_torch).squeeze()
+                qvalues = self.policy(
+                    (encoded_state['Boards'],encoded_state['Current tiles'],encoded_state['Previous tiles']), 
+                    actions_torch).squeeze()
                 argmax = qvalues.argmax()
                 return actions[argmax],actions_torch[argmax]
         i = random.randint(0, len(actions)-1)
         return actions[i],actions_torch[i]
     
-
-        
-    def give_reward(self, reward, next_state, possible_actions):
+    # TODO: kingdomino env should never output None reward and next state
+    # TODO: convert next statehere and reuse in select action possible
+    def give_reward(self, reward, next_state, done, possible_actions):
         # print('Previous state:')
         # display(draw_obs(self.prev_state))
         # print('State:')
         # display(draw_obs(next_state))
-        self.memory.push((
-            self.prev_state, 
+        encoded_next_state = state_encoding(next_state, self.n_players, self.device)
+        self.policy.filter_encoded_state(encoded_next_state)
+        self.memory.add((
+            self.encoded_prev_state['Boards'].squeeze(),
+            self.encoded_prev_state['Current tiles'].squeeze(),
+            self.encoded_prev_state['Previous tiles'].squeeze(),
             self.prev_action.unsqueeze(0),
             torch.tensor([reward], device=self.device, dtype=torch.float32),
-            self.convert_state_torch(next_state),
-            self.convert_actions_torch(possible_actions)))
+            encoded_next_state['Boards'].squeeze(),
+            encoded_next_state['Current tiles'].squeeze(),
+            encoded_next_state['Previous tiles'].squeeze(),
+            done,
+            actions_encoding(possible_actions, self.n_players)))
         self.optimize()
         
-    # might need to rearrange this a bit
+    # states: (boards, cur_tiles, prev_tiles)
+    # boards: bs x boards_shape
+    # cur_tiles: bs x cur_tiles_shape
+    # prev_tiles: bs x prev_tiles_shape
+    # possible_actions: bs x varying sizes x action shape
+    # def get_expected_values(self, state, possible_actions):
+    #     # possible_actions: bs x varying x action shape --> bs x max size x action shape
+    #     # BUT can't loop over possible actions to get max :(
+    #     # Good middle gorund: memory remembers the biggest possible actions and it can be used
+    #     # here to augment possible actions
+    #     state = boards,cur_tiles,prev_tiles
+    #     # max_n_possible_actions = self.memory.max_n_possible_actions
+    #     possible_actions = torch.zeros(self.batch_size, max_n_possible_actions, *possible_actions.shape)
+    #     padded_possible_actions = pad_sequence(data, batch_first=True)
+    #     pass
+        
     def optimize(self):
         if len(self.memory) < self.batch_size:
             return
-        transitions = self.memory.sample(self.batch_size)
-        batch = Transition(*zip(*transitions))
-        # non_final_mask = torch.tensor(
-        #     tuple(map(lambda s: s is not None, 
-        #               batch.next_state)), device=self.device, dtype=torch.bool)
-        # non_final_next_states = [s for s in batch.next_state if s is not None]
-        next_states = batch.next_state
-        state_batch_listdict = batch.state
-        action_batch = torch.cat(batch.action)
-        reward_batch = torch.cat(batch.reward)
-        state_batch = self.listdict2dicttensor(state_batch_listdict)
-        possible_actions_batch = batch.possible_actions
-
-        state_action_values = self.policy(state_batch, action_batch).squeeze()
+        if isinstance(self.memory, PrioritizedReplayBuffer):
+            batch, weights, tree_idxs = self.memory.sample(self.batch_size)
+        else:
+            batch = self.memory.sample(self.batch_size)
         
-        next_state_values = torch.zeros(self.batch_size, device=self.device)
+        boards_state,cur_tiles_state,prev_tiles_state, \
+        action, reward, \
+        boards_next_state, cur_tiles_next_state, prev_tiles_next_state, \
+        done, possible_actions = batch
+        
+        state_action_values = self.policy(
+            (boards_state.to(self.device), cur_tiles_state.to(self.device), prev_tiles_state.to(self.device)), 
+            action.to(self.device)).squeeze()
+        
         with torch.no_grad():
-            # problem states list of dict, cant apply non_final_mask directly
-            # next_state_values_non_final = torch.zeros(torch.sum(non_final_mask), device=self.device)
-            # TODO: god awful loop, but problem bcs possible actions take different shapes you see
-            # Perhaps should fill in with 0s and ignore the results of those
-            for i,(state,actions) in enumerate(zip(next_states,possible_actions_batch)):
-                # print('STATE :')
-                # display(draw_obs(state_batch_listdict[i]))
-                # print('ACTION :')
-                # print(action_batch[i])
-                # print('REWARD :')
-                # print(reward_batch[i])
-                if state is None:
-                    # print('Next state is None')
-                    continue
-                values = self.target(state, actions).squeeze()
-                next_state_values[i] = values.max()
-                # print('NEXT STATE :')
-                # display(draw_obs(state))
-                # print('POSSIBLE ACTIONS :', actions)
-                # print('VALUES :', values)
-                # print('MAX VALUES :', values.max())
-        expected_state_action_values = (next_state_values * self.gamma) + reward_batch
-        loss = self.criterion(state_action_values, expected_state_action_values)
+            # get size of possible actions
+            # useful later when reconstruction
+            possible_actions_sizes = torch.zeros(
+                self.batch_size, dtype=torch.int, device=self.device)
+            for i in range(self.batch_size):
+                possible_actions_sizes[i] = len(possible_actions[i])
+
+                
+            possible_actions_torch = torch.cat(possible_actions)
+    
+            boards_next_state = boards_next_state.repeat_interleave(
+                possible_actions_sizes,
+                dim=0)
+            cur_tiles_next_state = cur_tiles_next_state.repeat_interleave(
+                possible_actions_sizes,
+                dim=0)
+            prev_tiles_next_state = prev_tiles_next_state.repeat_interleave(
+                possible_actions_sizes,
+                dim=0)
+    
+            all_next_state_action_values = self.target(
+                (boards_next_state.to(self.device), 
+                 cur_tiles_next_state.to(self.device),
+                 prev_tiles_next_state.to(self.device)), 
+                possible_actions_torch.to(self.device)).squeeze()
+            
+            possible_actions_idxs = torch.zeros(
+                self.batch_size+1,
+                dtype=torch.int,
+                device=self.device)
+            possible_actions_idxs[1:] = torch.cumsum(
+                possible_actions_sizes, 0)
+            # next state values b*sum possible actions in batch x *action
+            next_state_values = torch.zeros(self.batch_size, device=self.device)
+            for i in range(self.batch_size):
+                next_state_values[i] = torch.max(
+                    all_next_state_action_values[possible_actions_idxs[i]:possible_actions_idxs[i+1]])
+            next_state_values = (1 - done.to(self.device)) * next_state_values
+            
+        next_state_values = torch.zeros(self.batch_size, device=self.device)
+        # with torch.no_grad():
+        #     # TODO: god awful loop, but problem bcs possible actions take different shapes you see
+        #     # Perhaps should fill in with 0s and ignore the results of those
+        #     for i in range(self.batch_size):
+        #         if done[i]:
+        #             # print('Episode is done')
+        #             continue
+        #         # print('STATE :')
+        #         # display(draw_encoded_state(
+        #         #     (boards_state[i],cur_tiles_state[i],prev_tiles_state[i])))
+        #         # print('ACTION :')
+        #         # print(action[i])
+        #         # print('REWARD :')
+        #         # print(reward[i])
+        #         values = self.target(
+        #             (boards_next_state[i].to(self.device), 
+        #              cur_tiles_next_state[i].to(self.device),
+        #              prev_tiles_next_state[i].to(self.device)), 
+        #             possible_actions[i].to(self.device)).squeeze()
+        #         next_state_values[i] = values.max()
+        #         # print('NEXT STATE :')
+        #         # display(draw_encoded_state((boards_next_state[i],cur_tiles_next_state[i],prev_tiles_next_state[i])))
+        #         # print('POSSIBLE ACTIONS :', possible_actions[i])
+        #         # print('VALUES :', values)
+        #         # print('MAX VALUES :', values.max())
+        expected_state_action_values = (next_state_values * self.gamma) + reward.to(self.device)
+        #loss = self.criterion(state_action_values, expected_state_action_values)
+        if isinstance(self.memory, PrioritizedReplayBuffer):
+            td_error = self.criterion(state_action_values - expected_state_action_values).detach()
+            self.memory.update_priorities(tree_idxs, td_error.cpu().numpy())
+        if isinstance(self.memory, PrioritizedReplayBuffer):
+            loss = torch.mean(self.criterion(state_action_values, expected_state_action_values) * weights.to(self.device))
+        else:
+            loss = torch.mean(self.criterion(state_action_values, expected_state_action_values))
         self.optimizer.zero_grad()
         loss.backward()
         torch.nn.utils.clip_grad_value_(self.policy.parameters(), 100)
@@ -217,7 +299,65 @@ class DQN_Agent:
 
 #%%
 
-class MPC_Agent:
+class AggressivePlayer(Player):
+    def action(self, state, kingdomino):
+        actions = kingdomino.getPossibleActions()
+    
+def around_center(position):
+    for point in position:
+        if list(point) in [[4,3],[3,4],[4,5],[5,4]]:
+            return True
+    return False
+    
+class SelfCenteredPlayer(Player):
+    # Heuristic: min nb of territories
+    # + when equality favor immediate tile placement not near center
+    # could also favor next play not near center for further finetuning
+    def action(self, state, kingdomino):
+        if self.previous_tile is None:
+            return random.choice(kingdomino.getPossibleActions())
+        best_action = None
+        lowest_n_territories = 999
+        best_near_center = False
+        best_near_center_2 = False
+        actions = kingdomino.getPossibleActions()
+        for action in actions:
+            tile_choice,position = action
+            positionT = position.T
+            if not (position == Kingdomino.discard_tile).all():
+                board_values = self.board.board[positionT[0],positionT[1]]
+                self.board.board[positionT[0],positionT[1]] = self.previous_tile[:2]
+            next_tile = kingdomino.current_tiles[tile_choice].tile
+            next_tile_positions = kingdomino.getPossiblePositions(next_tile, every_pos=True)
+            # print('Player', kingdomino.current_player_id, 'playing according to kingdomino')
+            # print('Action', action)
+            # print('Next tile', next_tile)
+            for next_tile_position in next_tile_positions:
+                next_tile_positionT = next_tile_position.T
+                if not (next_tile_position == Kingdomino.discard_tile).all():
+                    board_new_values = self.board.board[next_tile_positionT[0],next_tile_positionT[1]]
+                    self.board.board[next_tile_positionT[0],next_tile_positionT[1]] = next_tile[:2]
+                territories = self.board.getTerritories()
+                n_territories = len(territories)
+                # print(territories)
+                # print('Next pos', next_tile_position)
+                # print('n territories', n_territories)
+                if (n_territories < lowest_n_territories) or (n_territories == lowest_n_territories and ((best_near_center and not around_center(position)) or (not best_near_center and best_near_center_2 and not around_center(next_tile_position)))):
+                    best_action = action
+                    lowest_n_territories = n_territories
+                    best_near_center = around_center(position)
+                    best_near_center_2 = around_center(next_tile_position)
+                if not (next_tile_position == Kingdomino.discard_tile).all():
+                    self.board.board[next_tile_positionT[0],next_tile_positionT[1]] = board_new_values
+            if not (position == Kingdomino.discard_tile).all():
+                self.board.board[positionT[0],positionT[1]] = board_values
+        return best_action
+        
+    
+    
+#%%
+
+class MPC_Agent(Player):
     
     def __init__(self, n_rollouts, player_id):
         self.n_rollouts = n_rollouts
