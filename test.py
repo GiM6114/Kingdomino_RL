@@ -70,9 +70,9 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 
-direc = 'C:/Users/hugom/OneDrive/Documents/ProjetProg/KingdominoAgent/Kingdomino_RL/Models/Model_3/Training_1'
-n = 20
-s = np.zeros((n,100,2))
+direc = 'C:/Users/hugom/OneDrive/Documents/ProjetProg/KingdominoAgent/Kingdomino_RL/Models/Model_1/Training_1'
+n = 206
+s = np.zeros((n,50,2))
 r = np.zeros((n,100,2))
 for i in range(1,n+1):
     s[i-1] = np.load(os.path.join(direc, str(i*100), 'scores_vs_random.npy'))
@@ -94,6 +94,60 @@ env = Kingdomino(
 test(env, players, 1, 2)
 
 scores = test(env, players, 100, 1, 10)
+
+#%%
+
+from run import test
+from kingdomino import Kingdomino
+import agent
+import torch
+from epsilon_scheduler import EpsilonDecayRestart
+
+eps_scheduler = EpsilonDecayRestart(
+    eps_start=0,
+    eps_end=0,
+    eps_decay=0,
+    eps_restart=0,
+    eps_restart_threshold=0)
+  
+hp_archi = {
+      # Architecture
+      'network_name_id':1,
+      'conv_channels':[16,8,4],
+      'conv_l':3,
+      'conv_kernel_size':[3,3,3],
+      'conv_stride':[1,1,1],
+      'pool_place':[0,0,0],
+      'pool_kernel_size':[2,2,2],
+      'pool_stride':[1,1,1],
+      'FMN_l':2,
+      'FMN_n':[32,64],
+      'fc_l':3,
+      'fc_n':[128,128,128],
+      # Game
+      'grid_size':5
+      }
+
+player_1 = agent.DQN_Agent(2,128,None,0.005,1e-4,0.99,0, hp_archi=hp_archi, network_name='PlayerFocusedFC')
+player_2 = agent.DQN_Agent(2,128,None,0.005,1e-4,0.99,1, hp_archi=hp_archi, network_name='PlayerFocusedFC')
+player_1.eval()
+player_2.eval()
+
+folder = 'C:/Users/hugom/OneDrive/Documents/ProjetProg/KingdominoAgent/Kingdomino_RL/Models/Model_1/Training_1/19500/'
+with open(folder + 'model', 'rb') as f:
+    m = torch.load(f)
+player_1.policy.load_state_dict(m['policy'])
+player_2.policy.load_state_dict(m['policy'])
+
+
+players = [player_1, player_2]
+env = Kingdomino(
+    grid_size=5,
+    players=players)
+test(env, players, 1, 2)
+
+scores = test(env, players, 100, 1, 10)
+
 
 #%%
 import pickle
@@ -120,10 +174,10 @@ for i in range(100):
 
     obs = (board, cur_tiles, prev_tile)
     display(graphics.draw_encoded_state(obs))
-    print(action)
-    print(reward)
+    print('Action:', action)
+    print('Reward:', reward)
     next_obs = (next_board, next_cur_tiles, next_prev_tile)
     display(graphics.draw_encoded_state(next_obs))
-    print(next_actions)
+    print('Next Actions:', next_actions)
 
 

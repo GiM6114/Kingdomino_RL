@@ -54,7 +54,7 @@ def boards_encoding(boards, n_players, device='cpu'):
         device=device)
     boards_one_hot.scatter_(2, (boards[:,:,0]+2).unsqueeze(2), 1)
     boards_one_hot[:,:,-1,:,:] = boards[:,:,1] # Place crowns at the end
-    return boards_one_hot
+    return boards_one_hot[:,:,1:]
 
 # positions_onehot: whether to also onehot encode the position part of the action
 def actions_encoding(actions, n_players, device='cpu', positions_onehot=False):

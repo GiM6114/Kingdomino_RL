@@ -16,16 +16,17 @@ img_size = 400
 separation_size = 10
 
 # only for single player as of yet
-# e : {'Boards':(n_players*9*9*9), 'Current tiles':(n_players,18)
+# e : {'Boards':(n_players*grid_size*grid_size*grid_size), 'Current tiles':(n_players,18)
 def encoded_to_original(e):
     e = {'Boards':e[0],'Current tiles':e[1], 'Previous tiles':e[2]}
+    grid_size = e['Boards'].shape[-1]
     n_players_board = e['Boards'].shape[0]
-    board = torch.zeros([n_players_board,2,9,9])
+    board = torch.zeros([n_players_board,2,grid_size,grid_size])
     board[:,1] = e['Boards'][:,-1] # crowns
     for p in range(n_players_board):
         for c in range(8):
-            for i in range(9):
-                for j in range(9):
+            for i in range(grid_size):
+                for j in range(grid_size):
                     if e['Boards'][p,c,i,j] == 1:
                         board[p,0,i,j] = c-2
     
@@ -54,13 +55,15 @@ def draw_encoded_state(obs):
 
 # TODO: has to know the type of encoding to draw properly
 def draw_obs(obs):
+    grid_size = obs['Boards'].shape[-1]
     n_players = obs['Current tiles'].shape[0]
     img = Image.new("RGB", (img_size,img_size), "white")
     board_size = (img_size-(separation_size*(n_players+1))) // n_players
 
     for i,board in enumerate(obs['Boards']):
         draw_board(board[0], board[1], img, board_size, top_left=(
-                        10 + i*(board_size+separation_size),10))
+                        10 + i*(board_size+separation_size),10),
+            grid_size=grid_size)
     for i,tile in enumerate(obs['Previous tiles']):
         draw_tile(tile, img,
                         top_left=(
@@ -97,12 +100,12 @@ def draw_game(kingdomino):
     return img
 
 
-def draw_board(board, crown, img, board_size, top_left):
-    tile_size = board_size // 9
+def draw_board(board, crown, img, board_size, top_left, grid_size):
+    tile_size = board_size // grid_size
     draw = ImageDraw.Draw(img)
     pointer = top_left
-    for y in range(9):
-        for x in range(9):
+    for y in range(grid_size):
+        for x in range(grid_size):
             draw.rectangle((pointer[0], pointer[1],
                             pointer[0]+tile_size,pointer[1]+tile_size),
                            fill=type2color[int(board[x,y])+2])

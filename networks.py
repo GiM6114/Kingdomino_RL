@@ -2,6 +2,7 @@ import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
 import torch
+from einops import rearrange
 
 from setup import N_TILE_TYPES, TILE_SIZE
 from encoding import TILE_ENCODING_SIZE, state_encoding
@@ -16,9 +17,9 @@ from encoding import TILE_ENCODING_SIZE, state_encoding
 
 
     
-class NeuralNetwork(nn.Module):
+class FC(nn.Module):
     def __init__(self, input_size, output_size, l, n):
-        super(NeuralNetwork, self).__init__()
+        super(FC, self).__init__()
         prev_n = input_size
         layers = []
         for i in range(l):
@@ -46,7 +47,7 @@ class AdaptiveCNN(nn.Module):
         FMNs = []
         for i in range(l):
             parameters_size = (prev_n_channels*conv_channels[i]*(conv_kernel_size[i]**2))+conv_channels[i]
-            FMNs.append(NeuralNetwork(aux_info_size, parameters_size, FMN_l, FMN_n))
+            FMNs.append(FC(aux_info_size, parameters_size, FMN_l, FMN_n))
             prev_n_channels = conv_channels[i]
         self.FMNs = nn.ModuleList(FMNs)
         
@@ -79,19 +80,7 @@ class AdaptiveCNN(nn.Module):
             prev_n_channels = self.conv_channels[i]
         return main
 
-# # FC player focused network
-# class PlayerFocusedFC(nn.Module):
-#     def __init__(self, n_players, network_info, device):
-#         super().__init__()
-#         self.fc = NeuralNetwork(
-#             input_size = 9*9*9 + 4 + 2 + ,
-#             output_size = ,
-#             l,
-#             n)
-        
-#     def forward(self, x, action):
-        
-    
+
 class DQN(nn.Module):
     def __init__(self,
                  n_players,
@@ -104,7 +93,7 @@ class DQN(nn.Module):
             network_info=network_info,
             output_size=network_info['shared_rep_size'],
             device=device).to(device)
-        self.action_and_shared = NeuralNetwork(
+        self.action_and_shared = FC(
             input_size=network_info['shared_rep_size'] + 2 + 2 + n_players,
             output_size=1,
             l=network_info['shared_l'],
@@ -119,6 +108,35 @@ class DQN(nn.Module):
             state = state.repeat(repeats=(action.size(dim=0),1))
         x = torch.cat((state,action), dim=1)
         x = self.action_and_shared(x)
+        return x
+    
+# Takes the whole board as input of a FC
+# One Qvalue output
+class PlayerFocusedFC(nn.Module):
+    def __init__(self, n_players, network_info, device):
+        super().__init__()
+        self.n_players = n_players
+        self.device = device
+        grid_size = network_info['grid_size']
+        # board + cur_tiles_info + cur_tiles_belong_player + prev_tile
+        state_size = 8*(grid_size**2) + TILE_ENCODING_SIZE*(n_players+1) + n_players
+        action_size = n_players + 4
+        # action_size = 4*grid_size**2  + 2*grid_size - 11
+        self.network = FC(
+            input_size=state_size+action_size,
+            output_size=1, 
+            l=network_info['fc_l'],
+            n=network_info['fc_n'])
+        
+    def filter_encoded_state(self, encoded_state):
+        encoded_state['Boards'] = encoded_state['Boards'][:,0]
+        encoded_state['Previous tiles'] = encoded_state['Previous tiles'][:,0]
+        
+    def forward(self, state, action):
+        board_state,cur_tiles,prev_tile = state
+        board_state = rearrange(board_state, 'b c g1 g2 -> b (c g1 g2)')
+        x = torch.cat((board_state, cur_tiles, prev_tile, action), dim=1)
+        x = self.network(x.float())
         return x
     
 # Action of player, previous tile of player, current tiles in FC networks
@@ -141,7 +159,7 @@ class PlayerFocusedACNN(nn.Module):
             pool_stride = network_info['pool_stride'], 
             FMN_l = network_info['FMN_l'], 
             FMN_n = network_info['FMN_n'])
-        self.fc = NeuralNetwork(162, 1, network_info['fc_l'], network_info['fc_n'])
+        self.fc = FC(324, 1, network_info['fc_l'], network_info['fc_n'])
     
     # modifies encoded state so that useless information (related to other players) is not saved into the replay buffer
     def filter_encoded_state(self, encoded_state):
@@ -149,18 +167,10 @@ class PlayerFocusedACNN(nn.Module):
         encoded_state['Previous tiles'] = encoded_state['Previous tiles'][:,0]
     
     # state: (boards,current_tiles,previous_tiles)
-    # state can be (1 x state_shape), in that case repeat
-    # state can be (b x state_shape) with action (b x action_shape)
-    # state can be (b x state_shape) with action (b*varying x action_shape)
+    # state is (b*varying x state_shape) with action (b x action_shape)
     def forward(self, state, action):
         boards,cur_tiles,prev_tiles = state
-        state_batch_size = boards.shape[0]
         actions_size = action.shape[0] # equal to state_batch_size if optimizing
-        if state_batch_size == 1:
-            # print('State batch size is 1')
-            cur_tiles = cur_tiles.repeat(repeats=(actions_size,1))
-            prev_tiles = prev_tiles.repeat(repeats=(actions_size,1))
-            boards = boards.repeat(repeats=(actions_size,1,1,1))
         aux = torch.cat([action, cur_tiles, prev_tiles],dim=1)
         # actions_size: batch size or number of possible actions if we are choosing the best action
         # print('Aux:',aux)
@@ -214,7 +224,7 @@ class BoardNetwork(nn.Module):
             pool_kernel_size = network_info['pool_kernel_size'],
             pool_stride = network_info['pool_stride']
             )
-        self.fc = NeuralNetwork(
+        self.fc = FC(
             input_size = 405, # modify according to error...or compute conv accordingly
             output_size = network_info['board_rep_size'],
             n = network_info['board_fc_n'],
@@ -238,7 +248,7 @@ class PlayerNetwork(nn.Module):
             n_inputs=N_TILE_TYPES+3,
             network_info=network_info)
         
-        self.join_info_network = NeuralNetwork(
+        self.join_info_network = FC(
             input_size = network_info['board_rep_size'] + TILE_ENCODING_SIZE,
             output_size = network_info['player_rep_size'], 
             l = network_info['board_prev_tile_fc_l'],
@@ -266,7 +276,7 @@ class Shared(nn.Module):
         shared_input_size = \
             (self.network_info['player_rep_size'] + TILE_ENCODING_SIZE+1) * self.n_players
             
-        self.shared_network = NeuralNetwork(
+        self.shared_network = FC(
             input_size=shared_input_size,
             output_size=output_size,
             l=self.network_info['shared_l'], 
