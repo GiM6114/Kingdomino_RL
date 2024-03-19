@@ -1,7 +1,10 @@
 import numpy as np
+import random
 
 class Player:
     def action(self, state, kingdomino):
+        pass
+    def processReward(self, reward, next_state, done):
         pass
     
 class HumanPlayer(Player):      
@@ -16,4 +19,4 @@ class HumanPlayer(Player):
 
 class RandomPlayer(Player):
     def action(self, state, kingdomino):
-        return kingdomino.getRandomAction()
+        return random.choice(kingdomino.getPossibleActions())

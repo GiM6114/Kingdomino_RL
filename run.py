@@ -43,22 +43,22 @@ def train(env, players, n_episodes, print_every=10):
     for i in range(n_episodes):
         if i%print_every == 0:
             print('Train episode :', i)
-        state = env.reset()
-        done = False
+        s = env.reset()
+        d = False
         sum_rewards = np.zeros(n_players)
-        reward_next_player = None
-        while not done:
-            for player_id in env.order:
-                # Give reward of previous move
+        while not d:
+            for p_id in env.order:
                 if not env.first_turn:
-                    # if reward_next_player != 0:
-                    #     print('Reward:', reward_next_player)
-                    players[player_id].give_reward(reward_next_player, state, env.empty_end_turn, env.getPossibleActions())
-                    sum_rewards[player_id] += reward_next_player
-                action = players[player_id].action(state, env)
-                state,reward_next_player,done,info = env.step(action) # reward none for first turn
-                if done:
-                    break
+                    r = env.getReward(p_id)
+                    p_a = env.getPossibleActions(encode=True)
+                    players[p_id].processReward(r, s, False, p_a)
+                    sum_rewards[p_id] += r
+                a = players[p_id].action(s, env)
+                s,d,info = env.step(a)
+            if d:
+                for i,player in enumerate(players):
+                    players[p_id].processReward(r, s, d, p_a)
+                    sum_rewards[p_id] += r
         rewards_tracker[i] = sum_rewards
     return rewards_tracker
 

@@ -1,11 +1,31 @@
 import torch
 import torch.nn.functional as F
 import numpy as np
+from operator import itemgetter
 
 from setup import N_TILE_TYPES
+from env.utils import position2id2position, get_n_actions
+from utils import cartesian_product
 
 # 2*N_TILE_TYPES + 2 + 1 : one hot encoded tiles + crowns + value of tile
 TILE_ENCODING_SIZE = 2*(N_TILE_TYPES+1) + 2 + 1
+
+class ActionEncoding:
+    def __init__(self, board_size, n_players):
+        self.n_players = n_players
+        self.n_actions = get_n_actions(board_size)
+        self.position2id,self.id2position = position2id2position(board_size)
+        
+    def encode(self, actions):
+       tiles,positions = actions
+       actions_id = itemgetter(positions)(self.position2id)
+       actions = np.zeros(self.n_actions * self.n_players)
+       actions[actions_id] = 1
+       actions[-self.n_players:] = tiles
+       return actions
+   
+    def action_decoding(self, action_id):
+        return self.id2action(action_id)
 
 # Assumes the observation at 0 is current player
 # Additional information : taken or not (TODO: and by whom)

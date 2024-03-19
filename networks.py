@@ -5,7 +5,7 @@ import torch
 from einops import rearrange
 
 from setup import N_TILE_TYPES, TILE_SIZE
-from encoding import TILE_ENCODING_SIZE, state_encoding
+from agents.encoding import TILE_ENCODING_SIZE, state_encoding
 
 
 

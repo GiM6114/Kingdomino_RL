@@ -74,7 +74,7 @@ def draw_obs(obs):
                         top_left=(
                             10 + i*75,
                             100+board_size))
-        if tile[-1] == 1:
+        if tile[-1] != -1:
             draw_belong(img=img, top_left=(10+i*75,120+board_size))
             
     
