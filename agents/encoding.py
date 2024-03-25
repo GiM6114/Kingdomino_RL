@@ -4,27 +4,40 @@ import numpy as np
 from operator import itemgetter
 
 from setup import N_TILE_TYPES
-from env.utils import position2id2position, get_n_actions
+from env.utils import action2id2action, get_n_actions
 from utils import cartesian_product
 
 # 2*N_TILE_TYPES + 2 + 1 : one hot encoded tiles + crowns + value of tile
 TILE_ENCODING_SIZE = 2*(N_TILE_TYPES+1) + 2 + 1
 
-class ActionEncoding:
+class ActionInterface:
+    # Interface between DQN FC and Kingdomino's action spaces
     def __init__(self, board_size, n_players):
         self.n_players = n_players
         self.n_actions = get_n_actions(board_size)
-        self.position2id,self.id2position = position2id2position(board_size)
+        self.action2id,self.id2action = action2id2action(board_size, n_players)
         
-    def encode(self, actions):
-       tiles,positions = actions
-       actions_id = itemgetter(positions)(self.position2id)
-       actions = np.zeros(self.n_actions * self.n_players)
-       actions[actions_id] = 1
-       actions[-self.n_players:] = tiles
-       return actions
+    # Kingdomino --> network
+    def encode(self, tiles, positions):
+        print('Actions ', actions)
+        tiles,positions = actions
+        actions_id = itemgetter(positions)(self.action2id)
+        actions = np.zeros(self.n_actions * self.n_players)
+        actions[actions_id] = 1
+        actions[-self.n_players:] = tiles
+        return actions
+    def encode(self, tiles, positions):
+        if len(tiles == 1):
+            actions_id = self.action2id[(tiles, positions)]
+        else:
+            all_pa = cartesian_product(tiles, positions)
+            actions_id = itemgetter(all_pa)(self.action2id)
+        actions = np.zeros(self.n_actions * self.n_players)
+        actions[actions_id] = 1
+        return actions
    
-    def action_decoding(self, action_id):
+    # network --> Kingdomino
+    def decode(self, action_id):
         return self.id2action(action_id)
 
 # Assumes the observation at 0 is current player
@@ -53,6 +66,7 @@ def tiles_encoding(tiles, n_players, device='cpu'):
     tiles_info[:,:,-1] = tiles[:,:,-1] # Value
     # +1 for empty (previous tile first round and current tiles last round)
     tiles_info[:,:,-3:-1] = tiles[:,:,-3:-1] # Crowns
+    print(tiles)
     tiles_info[:,:,:N_TILE_TYPES+1] = F.one_hot(tiles[:,:,0], num_classes=N_TILE_TYPES+1)
     tiles_info[:,:,N_TILE_TYPES+1:-3] = F.one_hot(tiles[:,:,1], num_classes=N_TILE_TYPES+1)
     return tiles_info

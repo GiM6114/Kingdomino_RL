@@ -6,7 +6,8 @@ from networks import PlayerFocusedFC, PlayerFocusedACNN
 from prioritized_experience_replay import PrioritizedReplayBuffer
 from agents.encoding import state_encoding
 from agents.base import Player  
-from agents.encoding import ActionEncoding  
+from agents.encoding import ActionInterface  
+from utils import cartesian_product
 
 class DQN_Agent_Base(Player):
     def __init__(self, 
@@ -17,7 +18,7 @@ class DQN_Agent_Base(Player):
                  lr,
                  gamma,
                  id,
-                 action_encoder,
+                 action_interface,
                  exploration_batch_size=1,
                  network_name=None,
                  hp_archi=None,
@@ -37,21 +38,22 @@ class DQN_Agent_Base(Player):
         self.id = id
         self.gamma = gamma
         self.memory = memory
-        self.action_encoder = action_encoder
+        self.action_interface = action_interface
+        self.hp_archi = hp_archi
 
-        if network_name == 'PlayerFocusedACNN':
-            self.network = PlayerFocusedACNN
-        elif network_name == 'PlayerFocusedFC':
-            self.network = PlayerFocusedFC
-        
         self.policy = policy
         self.target = target
+        self.setup_networks()
+        
         self.target.load_state_dict(self.policy.state_dict())
         
         self.optimizer = torch.optim.AdamW(self.policy.parameters(), lr=lr, amsgrad=True)
         self.criterion = nn.SmoothL1Loss(reduction='none')
         self.train()
         self.reset()
+        
+    def setup_networks(self):
+        raise NotImplementedError()
     
     def train(self):
         self.training = True
@@ -80,7 +82,7 @@ class DQN_Agent_Base(Player):
             encoded_n_s['Current tiles'].squeeze(),
             encoded_n_s['Previous tiles'].squeeze(),
             d,
-            self.action_encoder.actions_encoding(p_a)))
+            self.action_interface.encode(p_a)))
         self.optimize()
         if d:
             self.reset()
@@ -162,19 +164,27 @@ class DQN_Agent_Base(Player):
         return state_batch_dict
     
 class DQN_Agent_FC(DQN_Agent_Base):
+    def setup_networks(self):
+        self.Network = PlayerFocusedFC
+        if self.policy is None:
+            self.policy = self.Network(self.n_players, self.hp_archi, self.device)
+        if self.target is None:
+            self.target = self.Network(self.n_players, self.hp_archi, self.device)
+    
     def select_action(self, s, kingdomino):
-        p_a = kingdomino.getPossibleActions()
+        t,p = kingdomino.getPossibleTilesPositions() # list of possible tiles, possible positions
         if self.training:
             sample = random.random()
             eps_threshold = self.eps_scheduler.eps() 
         if not self.training or sample > eps_threshold:
             # pick action with max qvalue among possible actions
-            p_a_mask = self.action_encoder.encode(p_a)
+            possible_a_mask = self.action_interface.encode_batch(t, p)
             qvalues = self.policy(s) # policy should output qvalues for EVERY action
-            idx = qvalues[p_a_mask].max(1).indices.view(1, 1)
-            return self.action_encoder.decode(idx),p_a_mask[idx] # actual action,action to register in buffer
-        i = random.randint(0, len(p_a)-1)
-        return p_a[i],self.action_decoder.encode(p_a[i])
+            idx = qvalues[possible_a_mask].max(1).indices.view(1, 1)
+            return self.action_interface.decode(idx),possible_a_mask[idx] # actual action,action to register in buffer
+        t_idx = random.randint(0, t.shape[0]-1)
+        p_idx = random.randint(0, p.shape[0]-1)
+        return (t[t_idx],p[p_idx]),self.action_interface.encode(t[t_idx],p[p_idx])
     
     def get_q_target(self, next_s, r, d, p_a):
         next_s_a_values_exhaustive = self.policy(next_s)

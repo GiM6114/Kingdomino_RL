@@ -125,8 +125,8 @@ class PlayerFocusedFC(nn.Module):
         self.network = FC(
             input_size=state_size+action_size,
             output_size=1, 
-            l=network_info['fc_l'],
-            n=network_info['fc_n'])
+            l=network_info['n_hidden_layers'],
+            n=network_info['hidden_layers_width'])
         
     def filter_encoded_state(self, encoded_state):
         encoded_state['Boards'] = encoded_state['Boards'][:,0]

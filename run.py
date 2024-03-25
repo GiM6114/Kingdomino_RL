@@ -1,11 +1,10 @@
-import agent
+import agents.base
 import numpy as np
-
-from IPython.core.display import Image, display
-from graphics import draw_obs
-
 import torch
+from IPython.core.display import Image, display
+from tqdm import tqdm
 
+from graphics import draw_obs
 
 def test(env, players, n_episodes, verbose=0, print_every=10):
     with torch.no_grad():
@@ -35,14 +34,12 @@ def test(env, players, n_episodes, verbose=0, print_every=10):
                         break
         return scores
 
-def train(env, players, n_episodes, print_every=10):
+def train(env, players, n_episodes):
     for player in players:
         player.train()
     n_players = len(players)
     rewards_tracker = np.zeros((n_episodes,n_players))
-    for i in range(n_episodes):
-        if i%print_every == 0:
-            print('Train episode :', i)
+    for i in tqdm(range(n_episodes)):
         s = env.reset()
         d = False
         sum_rewards = np.zeros(n_players)
@@ -64,7 +61,7 @@ def train(env, players, n_episodes, print_every=10):
 
 def human_test(env, player):
     player.eval()
-    human = agent.HumanPlayer()
+    human = agents.base.HumanPlayer()
     players = [player, human]
     state = env.reset()
     done = False
@@ -78,7 +75,7 @@ def human_test(env, player):
             
 def test_random(env, player, n_episodes, print_every=10):
     player.eval()
-    random_player = agent.RandomPlayer()
+    random_player = agents.base.RandomPlayer()
     players = [player, random_player]
     n_players = len(players)
     env.players = players

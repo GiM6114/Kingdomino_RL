@@ -7,8 +7,9 @@ import pickle
 from IPython.core.display import Image, display
 
 from epsilon_scheduler import EpsilonDecayRestart
-import kingdomino
-import agent
+import env.kingdomino
+import env.rewards
+import agents.dqn
 from printer import Printer
 import run
 from graphics import draw_obs
@@ -51,9 +52,9 @@ print(f'Device used: {device}')
 #       }
 
 network_names = ['PlayerFocusedACNN','PlayerFocusedFC']
-reward_fns = [kingdomino.player_focused_reward]
+reward_fns = [env.rewards.player_focused_reward]
 
-hp = {'batch_size':256,
+hp = {'batch_size':64,
       'tau':0.005,
       'gamma':0.99999,
       'lr':1e-4,
@@ -141,7 +142,7 @@ if __name__ == '__main__':
         eps_restart=hp['eps_restart'],
         eps_restart_threshold=hp['eps_restart_threshold'])
     
-    player_1 = agent.DQN_Agent(
+    player_1 = agents.dqn.DQN_Agent(
         n_players=n_players,
         network_name=network_names[hp['network_name_id']],
         batch_size=hp['batch_size'], 
@@ -167,7 +168,7 @@ if __name__ == '__main__':
             eps_scheduler = pickle.load(file)
         player_1.eps_scheduler = eps_scheduler
         
-    player_2 = agent.DQN_Agent(
+    player_2 = agents.dqn.DQN_Agent(
         n_players=n_players, 
         batch_size=hp['batch_size'], 
         tau=hp['tau'], 
@@ -180,7 +181,7 @@ if __name__ == '__main__':
         memory=player_1.memory,
         id=1)
     players = [player_1, player_2]
-    env = kingdomino.Kingdomino(
+    env = env.kingdomino.Kingdomino(
         players=players,
         grid_size=hp['grid_size'],
         reward_fn=reward_fns[hp['reward_name_id']])
