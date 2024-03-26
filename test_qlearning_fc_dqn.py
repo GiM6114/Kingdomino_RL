@@ -25,35 +25,6 @@ print(f'Device used: {device}')
 
 #%%
 
-# hp = {'batch_size':128,
-#       'tau':0.005,
-#       'gamma':0.99999,
-#       'lr':1e-4,
-#       'replay_memory_size':20000,
-#       # Exploration
-#       'eps_start':0.9,
-#       'eps_end':0.01,
-#       'eps_decay':2500,
-#       'eps_restart_threshold':0.05,
-#       'eps_restart':0.1,
-#       # Architecture
-#       'conv_channels':[32,16,5],
-#       'conv_l':3,
-#       'conv_kernel_size':[3,3,3],
-#       'conv_stride':[1,1,1],
-#       'pool_place':[0,0,0],
-#       'pool_kernel_size':None,
-#       'pool_stride':None,
-#       'board_rep_size':100,
-#       'board_fc_n':100,
-#       'board_fc_l':1, 
-#       'player_rep_size':100,
-#       'board_prev_tile_fc_l':1,
-#       'shared_rep_size':100,
-#       'shared_l':3, 
-#       'shared_n':100
-#       }
-
 input_names = ['PlayerFocused','AllPlayers']
 method_names = ['Loop','NoLoop']
 reward_fns = [env.rewards.player_focused_reward]
