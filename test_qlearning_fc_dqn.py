@@ -29,7 +29,7 @@ input_names = ['PlayerFocused','AllPlayers']
 method_names = ['Loop','NoLoop']
 reward_fns = [env.rewards.player_focused_reward]
 
-hp = {'batch_size':64,
+hp = {'batch_size':256,
       'tau':0.005,
       'gamma':0.99,
       'lr':3e-5,

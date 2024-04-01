@@ -19,13 +19,16 @@ class DQN_Agent_Base(Player):
                  gamma,
                  id,
                  action_interface,
+                 double=False,
                  exploration_batch_size=1,
                  network_name=None,
                  hp_archi=None,
                  replay_memory_size=None,
                  device='cpu',
                  policy=None,
+                 policy2=None,
                  target=None,
+                 target2=None,
                  memory=None):
         # should be 1 if env on cpu
         self.exploration_batch_size = exploration_batch_size
@@ -40,14 +43,21 @@ class DQN_Agent_Base(Player):
         self.memory = memory
         self.action_interface = action_interface
         self.hp_archi = hp_archi
-
+        self.double = double
+    
         self.policy = policy
+        if self.double:
+            self.policy2 = policy2
         self.target = target
+        if self.double:
+            self.target2 = target2
         self.setup_networks()
         
         self.target.load_state_dict(self.policy.state_dict())
         
         self.optimizer = torch.optim.AdamW(self.policy.parameters(), lr=lr, amsgrad=True)
+        if self.double:
+            self.optimizer2 = torch.optim.AdamW(self.policy2.parameters(), lr=lr, amsgrad=True)
         self.criterion = nn.SmoothL1Loss(reduction='none')
         self.train()
         self.reset()
@@ -59,77 +69,54 @@ class DQN_Agent_Base(Player):
         self.training = True
         self.policy.train()
         self.target.train()
+        if self.double:
+            self.policy2.train()
+            self.target2.train()
         
     def eval(self):
         self.training = False
         self.policy.eval()
         self.target.eval()
-    
-    def reset(self):
-        self.encoded_prev_s = None
-        self.prev_a = None
-        
-    def process_reward(self, r, n_s, d, p_a):
-        encoded_n_s = state_encoding(n_s, self.n_players, self.device)
-        self.policy.filter_encoded_state(encoded_n_s)
-        self.memory.add((
-            self.encoded_prev_s['Boards'].squeeze(),
-            self.encoded_prev_s['Current tiles'].squeeze(),
-            self.encoded_prev_s['Previous tiles'].squeeze(),
-            self.prev_a.unsqueeze(0),
-            torch.tensor([r], device=self.device, dtype=torch.float32),
-            encoded_n_s['Boards'].squeeze(),
-            encoded_n_s['Current tiles'].squeeze(),
-            encoded_n_s['Previous tiles'].squeeze(),
-            d,
-            self.action_interface.encode(p_a)))
-        self.optimize()
-        if d:
-            self.reset()
-   
-    # state : dict['Boards','Previous tiles','Current tiles']
-    # state_encoding : same but one_hot_encoded
-    @torch.no_grad()
-    def action(self, s, kingdomino):
-        encoded_s = state_encoding(s, self.n_players, self.device)
-        self.policy.filter_encoded_state(encoded_s)
-        if self.training:
-            self.encoded_prev_s = encoded_s
-        with torch.no_grad():
-            a,a_torch = self.select_action(s, kingdomino)
-        self.prev_a = a_torch
-        return a 
+        if self.double:
+            self.policy2.eval()
+            self.target2.eval()
     
     def select_action(self, s, kingdomino):
         raise NotImplementedError()
         
     def get_q_target(self, next_s, r, d, p_a):
         raise NotImplementedError()
-    
-    
-    def PER(self):
-        return isinstance(self.memory, PrioritizedReplayBuffer)
 
     def optimize(self):
         if len(self.memory) < self.batch_size:
             return
+        # Get batch
         if self.PER():
             batch, weights, tree_idxs = self.memory.sample(self.batch_size)
         else:
             batch = self.memory.sample(self.batch_size)
         
-        boards_state,cur_tiles_state,prev_tiles_state, \
-        action, reward, \
-        boards_next_state, cur_tiles_next_state, prev_tiles_next_state, \
-        done, possible_actions = batch
+        boards_s,cur_tiles_s,prev_tiles_s, \
+        a, r, \
+        boards_next_s, cur_tiles_next_s, prev_tiles_next_s, \
+        d, possible_a = batch
+        
+        # Transfer on accelerator
+        boards_s = boards_s.ti(self.device)
+        cur_tiles_s = cur_tiles_s.to(self.device)
+        prev_tiles_s = prev_tiles_s.to(self.device)
+        a = a.to(self.device)
+        r = r.to(self.device)
         
         q = self.policy(
-            (boards_state.to(self.device), cur_tiles_state.to(self.device), prev_tiles_state.to(self.device)), 
-            action.to(self.device)).squeeze()
+            (boards_s, cur_tiles_s, prev_tiles_s), a).squeeze()
+        if self.double:
+            q2 = self.policy2(
+                (boards_s, cur_tiles_s, prev_tiles_s), a).squeeze()
         
-        next_state = (boards_next_state, cur_tiles_next_state, prev_tiles_next_state)
+        next_s = (boards_next_s, cur_tiles_next_s, prev_tiles_next_s)
         with torch.no_grad():
-            q_target = self.get_q_target(next_state, reward, done, possible_actions)
+            q_target = self.get_q_target(next_s, r, d, possible_a)
         
         with torch.no_grad():
             if self.PER():
@@ -137,31 +124,42 @@ class DQN_Agent_Base(Player):
                 self.memory.update_priorities(tree_idxs, td_error.detach().cpu().numpy())
         if self.PER():
             loss = torch.mean(self.criterion(q, q_target) * weights.to(self.device))
+            if self.double:
+                loss2 = torch.mean(self.criterion(q2, q_target) * weights.to(self.device))
         else:
             loss = torch.mean(self.criterion(q, q_target))
+            if self.double:
+                loss2 = torch.mean(self.criterion(q, q_target))
             
         self.optimizer.zero_grad()
+        if self.double:
+            self.optimizer2.zero_grad()
         loss.backward()
+        if self.double:
+            loss2.backward()
         torch.nn.utils.clip_grad_value_(self.policy.parameters(), 100)
         self.optimizer.step()
+        if self.double:
+            self.optimizer2.step()
         
         self.update_target()
         
-    
     @torch.no_grad()
     def update_target(self):
         target_net_state_dict = self.target.state_dict()
         policy_net_state_dict = self.policy.state_dict()
+        if self.double:
+            target_net_state_dict2 = self.target2.state_dict()
+            policy_net_state_dict2 = self.policy2.state_dict()
         for key in policy_net_state_dict:
             target_net_state_dict[key] = policy_net_state_dict[key]*self.tau + target_net_state_dict[key]*(1-self.tau)
+            if self.double:
+                target_net_state_dict2[key] = policy_net_state_dict2[key]*self.tau + target_net_state_dict2[key]*(1-self.tau)
         self.target.load_state_dict(target_net_state_dict)
+        if self.double:
+            self.target2.load_state_dict(target_net_state_dict2)
         
-    def listdict2dicttensor(self, state_batch):
-        state_batch_dict = {key:value for key,value in state_batch[0].items()}
-        for state in state_batch[1:]:
-            for key in state_batch_dict.keys():
-                state_batch_dict[key] = torch.cat((state_batch_dict[key], state[key]), dim=0)
-        return state_batch_dict
+
     
 class DQN_Agent_FC(DQN_Agent_Base):
     def setup_networks(self):
@@ -170,6 +168,11 @@ class DQN_Agent_FC(DQN_Agent_Base):
             self.policy = self.Network(self.n_players, self.hp_archi, self.device)
         if self.target is None:
             self.target = self.Network(self.n_players, self.hp_archi, self.device)
+        if self.double:
+            if self.policy2 is None:
+                self.policy2 = self.Network(self.n_players, self.hp_archi, self.device)
+            if self.target2 is None:
+                self.target2 = self.Network(self.n_players, self.hp_archi, self.device)
     
     def select_action(self, s, kingdomino):
         t,p = kingdomino.getPossibleTilesPositions() # list of possible tiles, possible positions
@@ -187,78 +190,82 @@ class DQN_Agent_FC(DQN_Agent_Base):
         return (t[t_idx],p[p_idx]),self.action_interface.encode(t[t_idx],p[p_idx])
     
     def get_q_target(self, next_s, r, d, p_a):
-        next_s_a_values_exhaustive = self.policy(next_s)
-        expected_next_s_a_values = torch.zerso(self.batch_size, device=self.device)
+        next_q_exhaustive = self.target(next_s)
+        if self.double:
+            next_q_exhaustive2 = self.target2(next_s)
         for i in range(self.batch_size):
-            next_s_value = (1 - d[i]) * torch.max(next_s_a_values_exhaustive[i,p_a])
-            expected_next_s_a_values[i] = (next_s_value * self.gamma) + r[i].to(self.device)
-        return expected_next_s_a_values
+            next_q = torch.max(next_q_exhaustive[i,p_a])
+            if self.double:
+                next_q = torch.min(next_q, torch.max(next_q_exhaustive2[i,p_a]))
+        expected_next_q = r + (1-d)*self.gamma*next_q
+        return expected_next_q
+
     
  #%%   
  
-class DQN_Agent_Loop(DQN_Agent_Base):
-    @torch.no_grad()
-    def select_action(self, s, kingdomino):
-        p_a = kingdomino.getPossibleActions()
-        p_a_torch = self.action_encoder.encode(p_a)
-        if self.training:
-            sample = random.random()
-            eps_threshold = self.eps_scheduler.eps() 
-        if not self.training or sample > eps_threshold:
-            n_p_a = actions_torch.shape[0]
-            qvalues = self.policy(
-                (encoded_s['Boards'].repeat(repeats=(n_p_a,1,1,1)),
-                 encoded_s['Current tiles'].repeat(repeats=(n_p_a,1)),
-                 encoded_s['Previous tiles'].repeat(repeats=(n_p_a,1))), 
-                p_a_torch).squeeze()
-            argmax = qvalues.argmax()
-            return actions[argmax],actions_torch[argmax]
-        i = random.randint(0, len(actions)-1)
-        return actions[i],actions_torch[i] 
+# class DQN_Agent_Loop(DQN_Agent_Base):
+#     @torch.no_grad()
+#     def select_action(self, s, kingdomino):
+#         p_a = kingdomino.getPossibleActions()
+#         p_a_torch = self.action_encoder.encode(p_a)
+#         if self.training:
+#             sample = random.random()
+#             eps_threshold = self.eps_scheduler.eps() 
+#         if not self.training or sample > eps_threshold:
+#             n_p_a = actions_torch.shape[0]
+#             qvalues = self.policy(
+#                 (encoded_s['Boards'].repeat(repeats=(n_p_a,1,1,1)),
+#                  encoded_s['Current tiles'].repeat(repeats=(n_p_a,1)),
+#                  encoded_s['Previous tiles'].repeat(repeats=(n_p_a,1))), 
+#                 p_a_torch).squeeze()
+#             argmax = qvalues.argmax()
+#             return actions[argmax],actions_torch[argmax]
+#         i = random.randint(0, len(actions)-1)
+#         return actions[i],actions_torch[i] 
     
-    @torch.no_grad()
-    def get_q_target(self, next_state, reward, done, possible_actions):
-        boards_next_state, cur_tiles_next_state, prev_tiles_next_state = next_state
-        # get size of possible actions
-        # useful later when reconstruction
-        possible_actions_sizes = torch.zeros(
-            self.batch_size, dtype=torch.int, device=self.device)
-        for i in range(self.batch_size):
-            possible_actions_sizes[i] = len(possible_actions[i])
+#     @torch.no_grad()
+#     def get_q_target(self, next_state, reward, done, possible_actions):
+#         boards_next_state, cur_tiles_next_state, prev_tiles_next_state = next_state
+#         # get size of possible actions
+#         # useful later when reconstruction
+#         possible_actions_sizes = torch.zeros(
+#             self.batch_size, dtype=torch.int, device=self.device)
+#         for i in range(self.batch_size):
+#             possible_actions_sizes[i] = len(possible_actions[i])
             
-        possible_actions_torch = torch.cat(possible_actions)
+#         possible_actions_torch = torch.cat(possible_actions)
 
-        boards_next_state = boards_next_state.repeat_interleave(
-            possible_actions_sizes,
-            dim=0)
-        cur_tiles_next_state = cur_tiles_next_state.repeat_interleave(
-            possible_actions_sizes,
-            dim=0)
-        prev_tiles_next_state = prev_tiles_next_state.repeat_interleave(
-            possible_actions_sizes,
-            dim=0)
+#         boards_next_state = boards_next_state.repeat_interleave(
+#             possible_actions_sizes,
+#             dim=0)
+#         cur_tiles_next_state = cur_tiles_next_state.repeat_interleave(
+#             possible_actions_sizes,
+#             dim=0)
+#         prev_tiles_next_state = prev_tiles_next_state.repeat_interleave(
+#             possible_actions_sizes,
+#             dim=0)
 
-        all_next_state_action_values = self.target(
-            (boards_next_state.to(self.device), 
-              cur_tiles_next_state.to(self.device),
-              prev_tiles_next_state.to(self.device)), 
-            possible_actions_torch.to(self.device)).squeeze()
+#         all_next_state_action_values = self.target(
+#             (boards_next_state.to(self.device), 
+#               cur_tiles_next_state.to(self.device),
+#               prev_tiles_next_state.to(self.device)), 
+#             possible_actions_torch.to(self.device)).squeeze()
         
-        possible_actions_idxs = torch.zeros(
-            self.batch_size+1,
-            dtype=torch.int,
-            device=self.device)
-        possible_actions_idxs[1:] = torch.cumsum(
-            possible_actions_sizes, 0)
-        # next state values b*sum possible actions in batch x *action
-        next_state_values = torch.zeros(self.batch_size, device=self.device)
-        for i in range(self.batch_size):
-            next_state_values[i] = torch.max(
-                all_next_state_action_values[possible_actions_idxs[i]:possible_actions_idxs[i+1]])
-        next_state_values = (1 - done.to(self.device)) * next_state_values
+#         possible_actions_idxs = torch.zeros(
+#             self.batch_size+1,
+#             dtype=torch.int,
+#             device=self.device)
+#         possible_actions_idxs[1:] = torch.cumsum(
+#             possible_actions_sizes, 0)
+#         # next state values b*sum possible actions in batch x *action
+#         next_state_values = torch.zeros(self.batch_size, device=self.device)
+#         for i in range(self.batch_size):
+#             next_state_values[i] = torch.max(
+#                 all_next_state_action_values[possible_actions_idxs[i]:possible_actions_idxs[i+1]])
+#         next_state_values = (1 - done.to(self.device)) * next_state_values
         
-        expected_state_action_values = (next_state_values * self.gamma) + reward.to(self.device)
-        return expected_state_action_values
+#         expected_state_action_values = (next_state_values * self.gamma) + reward.to(self.device)
+#         return expected_state_action_values
     
 if __name__ == '__main__':
     pass

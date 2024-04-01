@@ -1,0 +1,2 @@
+class ActorCritic(Player):
+    pass
