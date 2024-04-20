@@ -25,3 +25,4 @@ Here are some of the ideas that I would like to try:
 - Pre-training of actor and critic (or just a DQN) on MPC-played games
 - Training to generalize to several players after pre-training against one:
  - Train against one player, freeze architecture, give last layer (applied to every opponent) as input to small network trained against several players
+- JAX implementation of Kingdomino: speed of execution of the environment is a big issue in this project and in RL in general, as it is run on CPU, so a JAX implementation where the environment could be run on GPU could be very valuable
