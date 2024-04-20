@@ -1,11 +1,11 @@
-###### Introduction
+#### Introduction
 
 This repository is an implementation of the board game Kingdomino, on which I intend to apply deep reinforcement learning techniques as a way to challenge myself and perhaps find interesting new strategies for the game.
 A video explaining the rules of the game can be found here: https://www.youtube.com/watch?v=smbwBPmP4Ms&ab_channel=WatchItPlayed.
 Some of the questions I wish to answer is whether it is a better strategy to mess with the plans of other players rather than maximizing one's own score, whether player should focus more often on picking small scores tiles as a way to play first more often, etc.
 Previous work on Kingdomino playing agents using Monte-Carlo methods, done by Gedda M. et al: https://arxiv.org/abs/1807.04458.
 
-###### Reasons for Kingdomino
+#### Reasons for Kingdomino
 
 Here is a couple reasons why Kingdomino is an interesting and challenging game:
 
@@ -14,7 +14,7 @@ Here is a couple reasons why Kingdomino is an interesting and challenging game:
 - Large state and action space
 - Two actions to be done per turn for a player
 
-###### Ideas
+#### Ideas
 
 Here are some of the ideas that I would like to try:
 
