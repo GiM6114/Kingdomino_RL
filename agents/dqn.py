@@ -1,15 +1,16 @@
 import random
 import torch.nn as nn
 import torch
+from abc import ABC, abstractmethod
 
 from networks import PlayerFocusedFC, PlayerFocusedACNN
 from prioritized_experience_replay import PrioritizedReplayBuffer
 from agents.encoding import state_encoding
-from agents.base import Player  
+from agents.base import LearningAgent
 from agents.encoding import ActionInterface  
 from utils import cartesian_product
 
-class DQN_Agent_Base(Player):
+class DQN_Agent_Base(LearningAgent, ABC):
     def __init__(self, 
                  n_players,
                  batch_size,
@@ -19,7 +20,6 @@ class DQN_Agent_Base(Player):
                  gamma,
                  id,
                  action_interface,
-                 double=False,
                  exploration_batch_size=1,
                  network_name=None,
                  hp_archi=None,
@@ -43,50 +43,38 @@ class DQN_Agent_Base(Player):
         self.memory = memory
         self.action_interface = action_interface
         self.hp_archi = hp_archi
-        self.double = double
     
         self.policy = policy
-        if self.double:
-            self.policy2 = policy2
         self.target = target
-        if self.double:
-            self.target2 = target2
         self.setup_networks()
         
         self.target.load_state_dict(self.policy.state_dict())
         
         self.optimizer = torch.optim.AdamW(self.policy.parameters(), lr=lr, amsgrad=True)
-        if self.double:
-            self.optimizer2 = torch.optim.AdamW(self.policy2.parameters(), lr=lr, amsgrad=True)
         self.criterion = nn.SmoothL1Loss(reduction='none')
         self.train()
         self.reset()
-        
+    
+    @abstractmethod
     def setup_networks(self):
         raise NotImplementedError()
+    @abstractmethod
+    def select_action(self, s, p_a):
+        pass
+    @abstractmethod
+    def get_q_target(self, next_s, r, d, p_a):
+        pass
     
     def train(self):
         self.training = True
         self.policy.train()
         self.target.train()
-        if self.double:
-            self.policy2.train()
-            self.target2.train()
         
     def eval(self):
         self.training = False
         self.policy.eval()
         self.target.eval()
-        if self.double:
-            self.policy2.eval()
-            self.target2.eval()
     
-    def select_action(self, s, kingdomino):
-        raise NotImplementedError()
-        
-    def get_q_target(self, next_s, r, d, p_a):
-        raise NotImplementedError()
-
     def optimize(self):
         if len(self.memory) < self.batch_size:
             return
@@ -102,17 +90,14 @@ class DQN_Agent_Base(Player):
         d, possible_a = batch
         
         # Transfer on accelerator
-        boards_s = boards_s.ti(self.device)
+        boards_s = boards_s.to(self.device)
         cur_tiles_s = cur_tiles_s.to(self.device)
         prev_tiles_s = prev_tiles_s.to(self.device)
-        a = a.to(self.device)
+        a = a.to(self.device).bool()
         r = r.to(self.device)
         
         q = self.policy(
             (boards_s, cur_tiles_s, prev_tiles_s), a).squeeze()
-        if self.double:
-            q2 = self.policy2(
-                (boards_s, cur_tiles_s, prev_tiles_s), a).squeeze()
         
         next_s = (boards_next_s, cur_tiles_next_s, prev_tiles_next_s)
         with torch.no_grad():
@@ -124,81 +109,69 @@ class DQN_Agent_Base(Player):
                 self.memory.update_priorities(tree_idxs, td_error.detach().cpu().numpy())
         if self.PER():
             loss = torch.mean(self.criterion(q, q_target) * weights.to(self.device))
-            if self.double:
-                loss2 = torch.mean(self.criterion(q2, q_target) * weights.to(self.device))
         else:
             loss = torch.mean(self.criterion(q, q_target))
-            if self.double:
-                loss2 = torch.mean(self.criterion(q, q_target))
             
         self.optimizer.zero_grad()
-        if self.double:
-            self.optimizer2.zero_grad()
         loss.backward()
-        if self.double:
-            loss2.backward()
         torch.nn.utils.clip_grad_value_(self.policy.parameters(), 100)
         self.optimizer.step()
-        if self.double:
-            self.optimizer2.step()
         
         self.update_target()
+        return {'DQN Loss':loss.item()}
         
     @torch.no_grad()
     def update_target(self):
         target_net_state_dict = self.target.state_dict()
         policy_net_state_dict = self.policy.state_dict()
-        if self.double:
-            target_net_state_dict2 = self.target2.state_dict()
-            policy_net_state_dict2 = self.policy2.state_dict()
         for key in policy_net_state_dict:
             target_net_state_dict[key] = policy_net_state_dict[key]*self.tau + target_net_state_dict[key]*(1-self.tau)
-            if self.double:
-                target_net_state_dict2[key] = policy_net_state_dict2[key]*self.tau + target_net_state_dict2[key]*(1-self.tau)
         self.target.load_state_dict(target_net_state_dict)
-        if self.double:
-            self.target2.load_state_dict(target_net_state_dict2)
         
 
     
 class DQN_Agent_FC(DQN_Agent_Base):
     def setup_networks(self):
         self.Network = PlayerFocusedFC
+        n_actions = self.action_interface.n_actions
         if self.policy is None:
-            self.policy = self.Network(self.n_players, self.hp_archi, self.device)
+            self.policy = self.Network(self.n_players, self.hp_archi, self.device, False, n_actions).to(self.device)
         if self.target is None:
-            self.target = self.Network(self.n_players, self.hp_archi, self.device)
-        if self.double:
-            if self.policy2 is None:
-                self.policy2 = self.Network(self.n_players, self.hp_archi, self.device)
-            if self.target2 is None:
-                self.target2 = self.Network(self.n_players, self.hp_archi, self.device)
-    
-    def select_action(self, s, kingdomino):
-        t,p = kingdomino.getPossibleTilesPositions() # list of possible tiles, possible positions
+            self.target = self.Network(self.n_players, self.hp_archi, self.device, False, n_actions).to(self.device)
+
+    def select_action(self, s, p_a):
+        t,p = p_a # list of possible tiles, possible positions
         if self.training:
             sample = random.random()
             eps_threshold = self.eps_scheduler.eps() 
         if not self.training or sample > eps_threshold:
             # pick action with max qvalue among possible actions
-            possible_a_mask = self.action_interface.encode_batch(t, p)
-            qvalues = self.policy(s) # policy should output qvalues for EVERY action
-            idx = qvalues[possible_a_mask].max(1).indices.view(1, 1)
-            return self.action_interface.decode(idx),possible_a_mask[idx] # actual action,action to register in buffer
-        t_idx = random.randint(0, t.shape[0]-1)
-        p_idx = random.randint(0, p.shape[0]-1)
-        return (t[t_idx],p[p_idx]),self.action_interface.encode(t[t_idx],p[p_idx])
+            possible_a_mask = self.action_interface.encode(t, p)
+            qvalues = self.policy(s).squeeze() # policy should output qvalues for EVERY action
+            # 2 pbs:
+                # returns id of the MASKED array so idx is wrong
+                # if several same qvalue, then always the same taken
+            masked_qvalues = qvalues.masked_fill(torch.from_numpy(~possible_a_mask).cuda(), float('-inf'))
+            max_val = masked_qvalues.max()
+            idxs = torch.where(masked_qvalues == max_val)
+            idx = random.choice(idxs)
+            env_action = self.action_interface.decode(idx)
+            torch_action = torch.zeros(possible_a_mask.shape[0], dtype=bool)
+            torch_action[idx] = 1
+            return env_action,torch_action # actual action,action to register in buffer
+        t_idx = random.randint(0, len(t)-1)
+        p_idx = random.randint(0, len(p)-1)
+        return ((t[t_idx],p[p_idx]),
+                self.action_interface.encode(
+                    t[t_idx][None,],
+                    p[p_idx][None,]))
     
     def get_q_target(self, next_s, r, d, p_a):
         next_q_exhaustive = self.target(next_s)
-        if self.double:
-            next_q_exhaustive2 = self.target2(next_s)
-        for i in range(self.batch_size):
-            next_q = torch.max(next_q_exhaustive[i,p_a])
-            if self.double:
-                next_q = torch.min(next_q, torch.max(next_q_exhaustive2[i,p_a]))
-        expected_next_q = r + (1-d)*self.gamma*next_q
-        return expected_next_q
+        masked_next_q = torch.masked_fill(next_q_exhaustive, ~p_a, float('-inf'))
+        next_q = masked_next_q.max(1).values
+        target = r + (1-d)*self.gamma*next_q
+        return target
 
     
  #%%   

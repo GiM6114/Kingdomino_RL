@@ -5,12 +5,12 @@ import pickle
 from IPython.core.display import Image, display
 from torch.utils.tensorboard import SummaryWriter
 from datetime import datetime
-from tqdm import tqdm
+from tqdm.auto import tqdm
 
 from epsilon_scheduler import EpsilonDecayRestart
-import env.kingdomino
-import env.rewards
-from env.utils import get_n_actions
+import kingdomino.kingdomino
+import kingdomino.rewards
+from kingdomino.utils import get_n_actions
 import agents.dqn
 from printer import Printer
 import run
@@ -19,6 +19,7 @@ from models_directory_utils import read_hyperparameters, write_hyperparameters
 from networks import TILE_ENCODING_SIZE
 from prioritized_experience_replay import ReplayBuffer, PrioritizedReplayBuffer
 from agents.encoding import ActionInterface
+from log import Logger
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 print(f'Device used: {device}')
@@ -27,13 +28,13 @@ print(f'Device used: {device}')
 
 input_names = ['PlayerFocused','AllPlayers']
 method_names = ['Loop','NoLoop']
-reward_fns = [env.rewards.player_focused_reward]
+reward_fns = [kingdomino.rewards.player_focused_reward]
 
 hp = {'batch_size':256,
       'tau':0.005,
       'gamma':0.99,
       'lr':3e-5,
-      'replay_memory_size':50000,
+      'replay_memory_size':1000,
       'PER':True,
       'reward_name_id':0,
       # Exploration
@@ -75,12 +76,20 @@ if __name__ == '__main__':
     method_name = method_names[hp['method_name_id']]
     input_name = input_names[hp['input_name_id']]
     writer = SummaryWriter(
-        log_dir=log_dir)
+        log_dir=log_dir + '/event')
+    logger = Logger(log_dir)
     
     n_players_input = 1 if 'PlayerFocused' in input_name else n_players
     # first dim depends on player focused or not
     # previous tiles + current_tiles
-    action_size = n_players+4
+    
+    if method_name == 'loop':
+        action_size = n_players+4
+        fixed_possible_actions_size = False
+    else:
+        n_actions = get_n_actions(hp['grid_size'], n_players)
+        action_size = n_actions
+        fixed_possible_actions_size = n_actions
     
     if n_players_input == 1:
         boards_state_size = 8,hp['grid_size'],hp['grid_size']
@@ -89,12 +98,12 @@ if __name__ == '__main__':
     
     Memory = PrioritizedReplayBuffer if hp['PER'] else ReplayBuffer
     memory = Memory(
-        boards_state_size=(n_players_input,8,hp['grid_size'],hp['grid_size']),
+        boards_state_size=boards_state_size,
         cur_tiles_state_size=(TILE_ENCODING_SIZE+1)*n_players,
         prev_tiles_state_size=TILE_ENCODING_SIZE*n_players_input,
-        action_size=action_size,
+        action_size=n_actions,
         buffer_size=hp['replay_memory_size'],
-        fixed_possible_actions_size=False if method_name == 'Loop' else get_n_actions(hp['grid_size']),
+        fixed_possible_actions_size=n_actions,
         device=device)
 
     eps_scheduler = EpsilonDecayRestart(
@@ -151,8 +160,8 @@ if __name__ == '__main__':
         id=1)
     
     players = [player_1, player_2]
-    env = env.kingdomino.Kingdomino(
-        players=players,
+    env = kingdomino.kingdomino.Kingdomino(
+        n_players=len(players),
         board_size=hp['grid_size'],
         reward_fn=reward_fns[hp['reward_name_id']])
 
@@ -161,23 +170,27 @@ if __name__ == '__main__':
     Printer.activated = False
     n_itrs = 150
     n_train_episodes = 100
-    n_test_episodes = 20
-    train_rewards = np.zeros((n_itrs,n_train_episodes,n_players))
-    test_scores = np.zeros((n_itrs,n_test_episodes,n_players))
-    for i in tqdm(range(n_itrs)):
-        train_rewards[i] = run.train(env, players, n_train_episodes) 
-        test_scores[i] = run.test_random(env, player_1, n_test_episodes)
-        score_player_1 = test_scores[i,:,0].mean()
-        score_random = test_scores[i,:,1].mean()
+    n_test_episodes = 10
+    for i in range(n_itrs):
+        logger.log(f'Iteration {i}')
+        train_rewards = run.train(env, players, n_train_episodes)
+        n_episodes += n_train_episodes
+        test_scores = run.test_random(env, player_1, n_test_episodes)    
+        
+        # Logging        
+        score_player_1 = test_scores[:,0].mean()
+        score_random = test_scores[:,1].mean()
+        logger.log(f'Test score against random: {score_player_1}')
+        logger.log(f'Score of random: {score_random}')
         print(f'Mean test score {n_episodes}-episodes-trained agent:', score_player_1)
         print('Mean test score random player:', score_random)
         writer.add_scalars('test_scores', 
-                           {'PLayer 1':score_player_1,
-                            'Player 2':score_random},
+                           {'agent':score_player_1,
+                            'random':score_random},
                            global_step=n_episodes)
         
-        total_n_train_episodes = n_episodes + (i+1)*n_train_episodes
-        path = os.path.join(log_dir, str(total_n_train_episodes))
+        # Recording models
+        path = os.path.join(log_dir, str(n_episodes))
         os.makedirs(path)
         if score_random > best_avg_reward:
             best_avg_reward = score_random

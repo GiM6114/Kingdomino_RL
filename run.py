@@ -6,7 +6,7 @@ from tqdm import tqdm
 
 from graphics import draw_obs
 
-def test(env, players, n_episodes, verbose=0, print_every=10):
+def test(env, players, n_episodes, verbose=-1):
     with torch.no_grad():
         for player in players:
             player.eval()
@@ -14,8 +14,6 @@ def test(env, players, n_episodes, verbose=0, print_every=10):
         done = False
         scores = np.zeros((n_episodes,n_players))
         for i in range(n_episodes):
-            if verbose == 1 and i % print_every == 0:
-                print('Test episode :', i)
             state = env.reset()
             done = False
             while not done:
@@ -31,6 +29,7 @@ def test(env, players, n_episodes, verbose=0, print_every=10):
                         display(draw_obs(state))
                     if done:
                         scores[i] = info['Scores']
+                        print(scores)
                         break
         return scores
 
@@ -39,7 +38,8 @@ def train(env, players, n_episodes):
         player.train()
     n_players = len(players)
     rewards_tracker = np.zeros((n_episodes,n_players))
-    for i in tqdm(range(n_episodes)):
+    pbar = tqdm(range(n_episodes))
+    for i in pbar:
         s = env.reset()
         d = False
         sum_rewards = np.zeros(n_players)
@@ -47,17 +47,44 @@ def train(env, players, n_episodes):
             for p_id in env.order:
                 if not env.first_turn:
                     r = env.getReward(p_id)
-                    p_a = env.getPossibleActions(encode=True)
-                    players[p_id].processReward(r, s, False, p_a)
+                    players[p_id].process_reward(r, False)
                     sum_rewards[p_id] += r
                 a = players[p_id].action(s, env)
                 s,d,info = env.step(a)
             if d:
                 for i,player in enumerate(players):
-                    players[p_id].processReward(r, s, d, p_a)
+                    loss = players[p_id].process_reward(r, d)
+                    if loss is not None:
+                        pbar.set_postfix(**loss)
                     sum_rewards[p_id] += r
         rewards_tracker[i] = sum_rewards
     return rewards_tracker
+      
+def test_random(env, player, n_episodes):
+    with torch.no_grad():
+        player.eval()
+        random_player = agents.base.RandomPlayer()
+        players = [player, random_player]
+        n_players = len(players)
+        scores = np.zeros((n_episodes,n_players))
+        for i in tqdm(range(n_episodes)):
+            s = env.reset()
+            d = False
+            while not d:
+                for p_id in env.order:
+                    # print('State:')
+                    # display(draw_obs(s))
+                    a = players[p_id].action(s, env)
+                    s,d,info = env.step(a)
+                    # print('Action:', a)
+                    # display(draw_obs(s))
+                    # print('Reward:', env.getReward(p_id))
+                    # print('Done:', d)
+                    # print('Info', info)
+                    if d:
+                        scores[i] = info['Scores']
+                        break
+        return scores
 
 def human_test(env, player):
     player.eval()
@@ -72,25 +99,3 @@ def human_test(env, player):
             state,reward,done,info = env.step(action)
             if done:
                 break
-            
-def test_random(env, player, n_episodes, print_every=10):
-    player.eval()
-    random_player = agents.base.RandomPlayer()
-    players = [player, random_player]
-    n_players = len(players)
-    env.players = players
-    scores = np.zeros((n_episodes,n_players))
-    for i in range(n_episodes):
-        if i%print_every == 0:
-            print('Test random episode :', i)
-        state = env.reset()
-        done = False
-        while not done:
-            for player_id in env.order:
-                action = players[player_id].action(state, env)
-                state,reward,done,info = env.step(action)
-                if done:
-                    scores[i] = info['Scores']
-                    break
-    return scores
-

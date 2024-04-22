@@ -10,8 +10,8 @@ class Player(ABC):
     @abstractmethod
     def action(self, state, kingdomino):
         pass
-
-    def processReward(self, reward, next_state, done):
+    @abstractmethod
+    def process_reward(self, reward, next_state, done):
         pass
     
 class HumanPlayer(Player):      
@@ -27,54 +27,74 @@ class HumanPlayer(Player):
 class RandomPlayer(Player):
     def action(self, state, kingdomino):
         return random.choice(kingdomino.getPossibleActions())
-    
+    def process_reward(self, reward, next_state, done):
+        pass
+
+
 class LearningAgent(Player, ABC):
-    # Factorizable in LearningAgent
     def reset(self):
-        self.encoded_prev_s = None
+        self.prev_s = None
         self.prev_a = None
+        self.prev_r = None
     
-    # Factorizable in LearningAgent
+    def add_to_memory(self, next_s, p_a):
+        # Check if first state of the episode
+        if self.prev_s is None:
+            return
+        # Check if last state of the episode
+        if next_s is None:
+            next_s = self.prev_s
+            p_a = [-1],[[[-1,-1],[-1,-1]]]
+            
+        s = self.prev_s
+        a = self.prev_a
+        r = torch.tensor([self.prev_r], dtype=torch.float32)
+        d = self.prev_d
+        self.memory.add((
+            s['Boards'].squeeze(),
+            s['Current tiles'].squeeze(),
+            s['Previous tiles'].squeeze(),
+            a,
+            r,
+            next_s['Boards'].squeeze(),
+            next_s['Current tiles'].squeeze(),
+            next_s['Previous tiles'].squeeze(),
+            d,
+            self.action_interface.encode(np.array(p_a[0]),np.array(p_a[1]))))
+    
     # state : dict['Boards','Previous tiles','Current tiles']
     # state_encoding : same but one_hot_encoded
     @torch.no_grad()
     def action(self, s, kingdomino):
+        p_a = kingdomino.getPossibleTilesPositions()
         encoded_s = state_encoding(s, self.n_players, self.device)
-        self.policy.filter_encoded_state(encoded_s)
+        self.policy.filter_encoded_state(encoded_s)        
         if self.training:
-            self.encoded_prev_s = encoded_s
+            self.add_to_memory(encoded_s, p_a)
+            self.prev_s = encoded_s
         with torch.no_grad():
-            a,a_torch = self.select_action(s, kingdomino)
+            # first output is what is returned to the environment
+            # second is what is stored in the replay memory
+            a,a_torch = self.select_action(encoded_s, p_a)
         self.prev_a = a_torch
         return a
     
-    # Factorizable in LearningAgent
     def PER(self):
         return isinstance(self.memory, PrioritizedReplayBuffer)
     
     @abstractmethod
-    def select_action(self, s, kingdomino):
-        raise NotImplementedError()
+    def select_action(self, s, p_a):
+        pass
     @abstractmethod
     def optimize(self):
-        raise NotImplementedError()
+        pass
 
          
-    # Factorizable in LearningAgent
-    def process_reward(self, r, n_s, d, p_a):
-        encoded_n_s = state_encoding(n_s, self.n_players, self.device)
-        self.policy.filter_encoded_state(encoded_n_s)
-        self.memory.add((
-            self.encoded_prev_s['Boards'].squeeze(),
-            self.encoded_prev_s['Current tiles'].squeeze(),
-            self.encoded_prev_s['Previous tiles'].squeeze(),
-            self.prev_a.unsqueeze(0),
-            torch.tensor([r], device=self.device, dtype=torch.float32),
-            encoded_n_s['Boards'].squeeze(),
-            encoded_n_s['Current tiles'].squeeze(),
-            encoded_n_s['Previous tiles'].squeeze(),
-            d,
-            self.action_interface.encode(p_a)))
-        self.optimize()
+    def process_reward(self, r, d):
+        self.prev_r = r
+        self.prev_d = d
+        loss = self.optimize()
         if d:
+            self.add_to_memory(next_s=None, p_a=None)
             self.reset()
+        return loss

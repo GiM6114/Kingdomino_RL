@@ -2,43 +2,45 @@ import torch
 import torch.nn.functional as F
 import numpy as np
 from operator import itemgetter
+from itertools import product
 
 from setup import N_TILE_TYPES
-from env.utils import action2id2action, get_n_actions
+from kingdomino.utils import action2id2action, get_n_actions
 from utils import cartesian_product
 
 # 2*N_TILE_TYPES + 2 + 1 : one hot encoded tiles + crowns + value of tile
 TILE_ENCODING_SIZE = 2*(N_TILE_TYPES+1) + 2 + 1
 
+def arr2tuple(a):
+    try:
+        return tuple(arr2tuple(i) for i in a)
+    except TypeError:
+        return a
+
 class ActionInterface:
     # Interface between DQN FC and Kingdomino's action spaces
     def __init__(self, board_size, n_players):
         self.n_players = n_players
-        self.n_actions = get_n_actions(board_size)
+        self.n_actions = get_n_actions(board_size, n_players)
         self.action2id,self.id2action = action2id2action(board_size, n_players)
-        
-    # Kingdomino --> network
-    def encode(self, tiles, positions):
-        print('Actions ', actions)
-        tiles,positions = actions
-        actions_id = itemgetter(positions)(self.action2id)
-        actions = np.zeros(self.n_actions * self.n_players)
-        actions[actions_id] = 1
-        actions[-self.n_players:] = tiles
-        return actions
-    def encode(self, tiles, positions):
-        if len(tiles == 1):
-            actions_id = self.action2id[(tiles, positions)]
+    
+    # tiles: np array of possible tiles (ex: 0,2)
+    # positions: np array of possible positions
+    def encode(self, tiles, positions):        
+        if len(tiles) == 1 and len(positions) == 1:
+            positions = arr2tuple(positions[0])
+            actions_id = self.action2id[(tiles.item(), positions)]
         else:
-            all_pa = cartesian_product(tiles, positions)
-            actions_id = itemgetter(all_pa)(self.action2id)
-        actions = np.zeros(self.n_actions * self.n_players)
+            positions = arr2tuple(positions)
+            all_pa = list(product(tiles, positions))
+            actions_id = list(itemgetter(*all_pa)(self.action2id))
+        actions = np.zeros(self.n_actions, dtype=bool)
         actions[actions_id] = 1
         return actions
    
     # network --> Kingdomino
     def decode(self, action_id):
-        return self.id2action(action_id)
+        return self.id2action[action_id]
 
 # Assumes the observation at 0 is current player
 # Additional information : taken or not (TODO: and by whom)
@@ -66,7 +68,6 @@ def tiles_encoding(tiles, n_players, device='cpu'):
     tiles_info[:,:,-1] = tiles[:,:,-1] # Value
     # +1 for empty (previous tile first round and current tiles last round)
     tiles_info[:,:,-3:-1] = tiles[:,:,-3:-1] # Crowns
-    print(tiles)
     tiles_info[:,:,:N_TILE_TYPES+1] = F.one_hot(tiles[:,:,0], num_classes=N_TILE_TYPES+1)
     tiles_info[:,:,N_TILE_TYPES+1:-3] = F.one_hot(tiles[:,:,1], num_classes=N_TILE_TYPES+1)
     return tiles_info

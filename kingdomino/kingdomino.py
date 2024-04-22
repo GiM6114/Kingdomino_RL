@@ -6,10 +6,10 @@ from einops import rearrange,repeat
 from operator import itemgetter
 
 from setup import GET_TILE_DATA, TILE_SIZE, N_TILE_TYPES
-from env.board import Boards
+from kingdomino.board import Boards
 from printer import Printer
 from graphics import draw_obs
-from utils import switch, arr_except
+from utils import switch, arr_except, cartesian_product
 
 
 class TileDeck:      
@@ -95,8 +95,6 @@ def isNeighbourToCastleOrSame(p_id, point, tile_type, board):
     return False 
 
 def getPossiblePositions(tile, board, every_pos, player_id):
-    print(tile)
-    print(board.boards[player_id])
     available_pos = []
     for i in range(board.size):
         for j in range(board.size):
@@ -115,7 +113,7 @@ def getPossiblePositions(tile, board, every_pos, player_id):
                             pass
     if len(available_pos) == 0:
         return [Kingdomino.discard_tile]
-    return available_pos
+    return np.array(available_pos)
 
 def isTilePlaceable(tile, board):
     return getPossiblePositions(tile, board, every_pos=False)
@@ -134,15 +132,14 @@ class Kingdomino:
     
     def __init__(self, 
                  board_size,
-                 players=None, 
+                 n_players=None, 
                  render_mode=None,
                  kingdomino=None,
                  reward_fn=lambda x,y: 0):
         self.board_size = board_size
         self.getReward = lambda p_id: reward_fn(self, p_id)
         self.tile_deck = TileDeck()
-        self.players = players
-        self.n_players = len(self.players)
+        self.n_players = n_players
         self.n_turns = 13
 
     def reset(self, seed=None, options=None):
@@ -214,8 +211,6 @@ class Kingdomino:
             self.current_tiles[:,-1] = -1
             self.current_tiles[:,:-1] = self.tile_deck.draw(self.n_players)
             self.current_tiles = sort_rows(self.current_tiles,-2)        
-        for player in self.players:
-            player.current_tile_id = -1
 
     # Board : self.board_size*self.board_size tile type + self.board_size*self.board_size crowns
     # Current/Previous tiles : 2 tile type, 2 crowns, 1 which player has chosen it, 1 value of tile, self.n_players whose player
@@ -252,9 +247,6 @@ class Kingdomino:
 
     def step(self, action):
         tile_id, position = action
-        if not isinstance(position, np.ndarray) or len(position)==1:
-            position = self.id2position(position)
-            
         # Select tile
         if not self.last_turn:
             self._pickTile(tile_id)
@@ -264,18 +256,16 @@ class Kingdomino:
                 self._placeTile(position, self.players_previous_tile[self.current_player_id])
         self.reset_score(self.current_player_id)
 
-
         done = self.last_turn and \
             self.current_player_itr == (self.n_players-1)
             
         self.current_player_itr += 1
-        return self._get_obs(), done, {}
+        return self._get_obs(), done, {'Scores':self.getScores()}
        
 
     def _pickTile(self, tile_id):
-        print(tile_id)
         if 0 > tile_id or tile_id >= self.n_players or self.current_tiles[tile_id,-1] != -1:
-            raise GameException(f'Error : Player {self.current_player_id} cannot choose tile {tile_id} because it is already selected !')
+            raise GameException(f'Tile id {tile_id} erroneous, might be already selected !')
         self.new_order[tile_id] = self.current_player_id
         self.current_tiles[tile_id,-1] = self.current_player_id
         self.players_current_tile_id[self.current_player_id] = tile_id
@@ -290,28 +280,28 @@ class Kingdomino:
     # Because some method might want to handle positions and then tile selection for instance
     def getPossibleTilesPositions(self):
         if self.last_turn:
-            tiles_possible = [-1]
+            tiles_possible = np.array([-1])
         else:
             tiles_possible = np.where(self.current_tiles[:,-1] == -1)[0]
-            print(np.where(self.current_tiles[:,-1] == -1)[0])
         if self.first_turn:
-            positions_possible = [Kingdomino.discard_tile]
+            positions_possible = np.array([Kingdomino.discard_tile])
         else:
             positions_possible = getPossiblePositions(
                 tile=self.players_previous_tile[self.current_player_id],
                 every_pos=True,
                 board=self.boards,
                 player_id=self.current_player_id)
-        # TODO: speed up using numpy generated cartesian product ?
-        print(tiles_possible, positions_possible)
         return tiles_possible, positions_possible
+    
+    def getPossibleActions(self):
+        return list(product(*self.getPossibleTilesPositions()))
 
 #%%
 
 if __name__ == '__main__':
     import agents.base as agent
     from IPython.core.display import Image, display
-    from env.rewards import player_focused_reward
+    from kingdomino.rewards import player_focused_reward
     
     player_1 = agent.RandomPlayer()
     player_2 = agent.RandomPlayer()
@@ -336,7 +326,7 @@ if __name__ == '__main__':
                 if not env.first_turn:
                     reward = env.getReward(p_id)
                     print(f'Reward: {reward}')
-                    players[p_id].processReward(reward=reward, next_state=state, done=False)
+                    players[p_id].process_reward(reward=reward, next_state=state, done=False)
                 action = players[p_id].action(state, env)
                 print('Action:', action)
                 state,done,info = env.step(action)
@@ -348,7 +338,7 @@ if __name__ == '__main__':
                     print('Last turn rewards')
                     for p_id,player in enumerate(players):
                         reward = env.getReward(p_id)
-                        player.processReward(reward=reward, next_state=state, done=True)
+                        player.process_reward(reward=reward, next_state=state, done=True)
                         print(f'Player {p_id}: {reward}')
         
     Printer.activated = False

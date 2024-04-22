@@ -110,21 +110,27 @@ class DQN(nn.Module):
         x = self.action_and_shared(x)
         return x
     
+
+
 # Takes the whole board as input of a FC
-# One Qvalue output
 class PlayerFocusedFC(nn.Module):
-    def __init__(self, n_players, network_info, device):
+    def __init__(self, n_players, network_info, device, action_in_input, output_dim, action_interface=None):
         super().__init__()
         self.n_players = n_players
         self.device = device
+        self.action_in_input = action_in_input
+        self.action_interface = action_interface
         grid_size = network_info['grid_size']
         # board + cur_tiles_info + cur_tiles_belong_player + prev_tile
         state_size = 8*(grid_size**2) + TILE_ENCODING_SIZE*(n_players+1) + n_players
         action_size = n_players + 4
         # action_size = 4*grid_size**2  + 2*grid_size - 11
+        input_size = state_size
+        if action_in_input:
+            input_size += action_size
         self.network = FC(
-            input_size=state_size+action_size,
-            output_size=1, 
+            input_size=input_size,
+            output_size=output_dim, 
             l=network_info['n_hidden_layers'],
             n=network_info['hidden_layers_width'])
         
@@ -132,11 +138,26 @@ class PlayerFocusedFC(nn.Module):
         encoded_state['Boards'] = encoded_state['Boards'][:,0]
         encoded_state['Previous tiles'] = encoded_state['Previous tiles'][:,0]
         
-    def forward(self, state, action):
-        board_state,cur_tiles,prev_tile = state
+    def forward(self, state, action=None):
+        if action is None and self.action_in_input:
+            raise Exception('Missing action in network input')
+        if type(state) is tuple:
+            board_state,cur_tiles,prev_tile = state
+        elif type(state) is dict:
+            board_state = state['Boards']
+            cur_tiles = state['Current tiles']
+            prev_tile = state['Previous tiles']
+        else:
+            raise Exception(f"Type of state input {type(state)} not recognized")
         board_state = rearrange(board_state, 'b c g1 g2 -> b (c g1 g2)')
-        x = torch.cat((board_state, cur_tiles, prev_tile, action), dim=1)
+        if self.action_in_input:
+            x = torch.cat((board_state, cur_tiles, prev_tile, action), dim=1)
+        else:
+            x = torch.cat((board_state, cur_tiles, prev_tile), dim=1)
         x = self.network(x.float())
+        if not self.action_in_input and action is not None:
+            # x is of shape (b,n_actions)
+            x = x.masked_select(action)
         return x
     
 # Action of player, previous tile of player, current tiles in FC networks
