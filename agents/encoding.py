@@ -41,6 +41,10 @@ class ActionInterface:
     # network --> Kingdomino
     def decode(self, action_id):
         return self.id2action[action_id]
+    
+    def decode_actions(self, actions_id):
+        ids = np.where(actions_id.cpu().numpy() == 1)
+        return list(itemgetter(*list(ids[0]))(self.id2action))
 
 # Assumes the observation at 0 is current player
 # Additional information : taken or not (TODO: and by whom)

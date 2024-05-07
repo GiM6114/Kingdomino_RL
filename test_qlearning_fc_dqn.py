@@ -33,8 +33,8 @@ reward_fns = [kingdomino.rewards.player_focused_reward]
 hp = {'batch_size':256,
       'tau':0.005,
       'gamma':0.99,
-      'lr':3e-5,
-      'replay_memory_size':1000,
+      'lr':3e-4,
+      'replay_memory_size':10000,
       'PER':True,
       'reward_name_id':0,
       # Exploration
@@ -47,7 +47,7 @@ hp = {'batch_size':256,
       'input_name_id':0,
       'method_name_id':1,
       'n_hidden_layers':3,
-      'hidden_layers_width':[128,128,128],
+      'hidden_layers_width':[256,128,128],
       # Game
       'grid_size':5
       }
@@ -170,7 +170,7 @@ if __name__ == '__main__':
     Printer.activated = False
     n_itrs = 150
     n_train_episodes = 100
-    n_test_episodes = 10
+    n_test_episodes = 20
     for i in range(n_itrs):
         logger.log(f'Iteration {i}')
         train_rewards = run.train(env, players, n_train_episodes)

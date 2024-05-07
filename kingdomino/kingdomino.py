@@ -37,86 +37,12 @@ class TileDeck:
 
 #%%
 
-
-
 class GameException(Exception):
     def __init__(self, msg):
         self.msg = msg
 
 def sort_rows(a, column):
     return a[a[:, column].argsort()]
-
-
-
-
-
-# position : TilePosition
-# inversed false : position.p1 corresponds to first tile
-# TODO : perhaps speed this up with position as a numpy array
-def checkPlacementValid(p_id, position, tile, board):
-    # Check five square and no overlapping
-    for point in position:
-        if (not board.size > point[0] >= 0) or (not board.size > point[1] >= 0):
-            raise GameException(f'{point[0]} or {point[1]} wrong index')
-        if not board.isInFiveSquare(p_id, point):
-            raise GameException(f'{point} is not in a five square.')
-        if board.getBoard(p_id, point[0], point[1]) != -1 or \
-            board.getBoard(p_id, point[0], point[1]) == -2:
-            raise GameException(f'Overlapping at point {point}.')
-    
-    # Check that at least one position is near castle or near same type of env
-    for i,point in enumerate(position):
-        if isNeighbourToCastleOrSame(p_id, point, tile[i], board):
-            return
-    raise GameException(f'{position} {tile} \n {board.boards[p_id]} not next to castle or same type of env.')    
-    
-
-def isNeighbourToCastleOrSame(p_id, point, tile_type, board):
-    middle = board.size // 2
-    castle_neighbors = np.array(
-        [(middle-1,middle),
-         (middle,middle-1),
-         (middle,middle+1),
-         (middle+1,middle)])
-    # Check if castle next
-    if np.any(np.all(point == castle_neighbors, axis=1)):
-        return True
-            
-    # Check if same next
-    for i in range(point[0]-1, point[0]+2):
-        for j in range(point[1]-1, point[1]+2):
-            # Exclude diagonals and center
-            if (i != point[0] and j != point[1]) and (i == point[0] and j == point[1]):
-                continue
-
-            if board.getBoard(p_id, i,j) == tile_type:
-                return True
-            
-    return False 
-
-def getPossiblePositions(tile, board, every_pos, player_id):
-    available_pos = []
-    for i in range(board.size):
-        for j in range(board.size):
-            if board.getBoard(player_id, i, j) == -1:
-                for _i in range(i-1,i+2):
-                    for _j in range(j-1,j+2):
-                        if (_i != i and _j != j) or (_i==i and _j==j) or board.getBoard(player_id, _i, _j) != -1:
-                            continue
-                        try:
-                            pos = np.array([[i,j],[_i,_j]])
-                            checkPlacementValid(player_id, pos, tile, board)
-                            available_pos.append(pos)
-                            if not every_pos:
-                                return available_pos
-                        except GameException:
-                            pass
-    if len(available_pos) == 0:
-        return [Kingdomino.discard_tile]
-    return np.array(available_pos)
-
-def isTilePlaceable(tile, board):
-    return getPossiblePositions(tile, board, every_pos=False)
 
 # would be nice to turn as many function in pure functions as possible to jax it
 # also no additions to player objects
@@ -286,15 +212,93 @@ class Kingdomino:
         if self.first_turn:
             positions_possible = np.array([Kingdomino.discard_tile])
         else:
+            # print('Previous tiles of current player:', self.players_previous_tile[self.current_player_id])
+            # print('Player id:', self.current_player_id)
             positions_possible = getPossiblePositions(
                 tile=self.players_previous_tile[self.current_player_id],
                 every_pos=True,
-                board=self.boards,
+                boards=self.boards,
                 player_id=self.current_player_id)
         return tiles_possible, positions_possible
     
     def getPossibleActions(self):
         return list(product(*self.getPossibleTilesPositions()))
+
+# position : TilePosition
+# inversed false : position.p1 corresponds to first tile
+# TODO : perhaps speed this up with position as a numpy array
+def checkPlacementValid(p_id, position, tile, boards):
+    # Check five square and no overlapping
+    for point in position:
+        if (not boards.size > point[0] >= 0) or (not boards.size > point[1] >= 0):
+            raise GameException(f'{point[0]} or {point[1]} wrong index')
+        if not boards.isInFiveSquare(p_id, point):
+            raise GameException(f'{point} is not in a five square.')
+        if boards.getBoard(p_id, point[0], point[1]) != -1 or \
+            boards.getBoard(p_id, point[0], point[1]) == -2:
+            raise GameException(f'Overlapping at point {point}.')
+    
+    # print('Tile', tile)
+    # print('Position', position)
+    # Check that at least one position is near castle or near same type of env
+    for i,point in enumerate(position):
+        if isNeighbourToCastleOrSame(p_id, point, tile[i], boards):
+            return
+    raise GameException(f'{position} {tile} \n {boards.boards[p_id]} not next to castle or same type of env.')    
+    
+
+def isNeighbourToCastleOrSame(p_id, point, tile_type, boards):
+    middle = boards.size // 2
+    castle_neighbors = np.array(
+        [(middle-1,middle),
+         (middle,middle-1),
+         (middle,middle+1),
+         (middle+1,middle)])
+    # print('Point:', point)
+    # Check if castle next
+    if np.any(np.all(point == castle_neighbors, axis=1)):
+        # print('Next to castle')
+        return True
+    # Check if same next
+    for i in range(point[0]-1, point[0]+2):
+        for j in range(point[1]-1, point[1]+2):
+            # Exclude diagonals and center
+            if (i != point[0] and j != point[1]) or (i == point[0] and j == point[1]):
+                continue
+
+            if boards.getBoard(p_id, i,j) == tile_type:
+                # print('Next to same tile type', tile_type, 'at', i,j)
+                return True
+    # print('Not next to')    
+    return False 
+
+def getPossiblePositions(tile, boards, every_pos, player_id):
+    available_pos = []
+    for i in range(boards.size):
+        for j in range(boards.size):
+            if boards.getBoard(player_id, i, j) == -1:
+                for _i in range(i-1,i+2):
+                    for _j in range(j-1,j+2):
+                        if (_i != i and _j != j) or (_i==i and _j==j) or boards.getBoard(player_id, _i, _j) != -1:
+                            continue
+                        try:
+                            pos = np.array([[i,j],[_i,_j]])
+                            checkPlacementValid(
+                                p_id=player_id, 
+                                position=pos, 
+                                tile=tile, 
+                                boards=boards)
+                            available_pos.append(pos)
+                            if not every_pos:
+                                return available_pos
+                        except GameException:
+                            pass
+    if len(available_pos) == 0:
+        return [Kingdomino.discard_tile]
+    return np.array(available_pos)
+
+def isTilePlaceable(tile, board):
+    return getPossiblePositions(tile, board, every_pos=False)
 
 #%%
 
@@ -309,7 +313,7 @@ if __name__ == '__main__':
     Printer.activated = False
     done = False
     env = Kingdomino(
-        players=players,
+        n_players=2,
         board_size=5,
         reward_fn=player_focused_reward)
 
@@ -334,6 +338,8 @@ if __name__ == '__main__':
                 print(env.current_tiles)
                 display(draw_obs(state))
                 print('Done:', done)
+                print('Player id:', p_id)
+                print('Possible actions:', env.getPossibleTilesPositions())
                 if done:
                     print('Last turn rewards')
                     for p_id,player in enumerate(players):

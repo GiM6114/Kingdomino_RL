@@ -180,4 +180,35 @@ for i in range(100):
     display(graphics.draw_encoded_state(next_obs))
     print('Next Actions:', next_actions)
 
+#%%
+
+from agents.encoding import ActionInterface
+import graphics
+from IPython.core.display import Image, display
+
+ai = ActionInterface(5,2)
+memory = torch.load('runs/DQN_FC/040524_005851/8000/checkpt.pt')['memory']
+samples = memory.sample(min(100,len(memory)))[0]
+for i in range(len(samples)):
+    print('------- NEW SAMPLE --------')
+    board = samples[0][i]
+    cur_tiles = samples[1][i]
+    prev_tile = samples[2][i]
+    action = samples[3][i]
+    reward = samples[4][i]
+    next_board = samples[5][i]
+    next_cur_tiles = samples[6][i]
+    next_prev_tile = samples[7][i]
+    done = samples[8][i]
+    next_actions = samples[9][i]
+
+    board = board.unsqueeze(0)
+    next_board = next_board.unsqueeze(0)
+    obs = (board, cur_tiles, prev_tile)
+    display(graphics.draw_encoded_state(obs))
+    print('Decoded action:', ai.decode(np.where(action.cpu().numpy()==1)[0][0]))
+    print('Reward:', reward)
+    next_obs = (next_board, next_cur_tiles, next_prev_tile)
+    display(graphics.draw_encoded_state(next_obs))
+    print('Decoded next actions:', ai.decode_actions(next_actions))
 

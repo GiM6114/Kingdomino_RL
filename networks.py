@@ -112,6 +112,9 @@ class DQN(nn.Module):
     
 
 
+
+
+
 # Takes the whole board as input of a FC
 class PlayerFocusedFC(nn.Module):
     def __init__(self, n_players, network_info, device, action_in_input, output_dim, action_interface=None):

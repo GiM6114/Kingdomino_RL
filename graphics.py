@@ -27,8 +27,11 @@ def encoded_to_original(e):
         for c in range(8):
             for i in range(grid_size):
                 for j in range(grid_size):
-                    if e['Boards'][p,c,i,j] == 1:
+                    if i == (grid_size//2) and j == (grid_size//2):
+                        board[p,0,i,j] = -2
+                    if e['Boards'][p,c-1,i,j] == 1:
                         board[p,0,i,j] = c-2
+    print(board)
     
     n_players = e['Current tiles'].shape[0] // 18
     cur_tile = torch.zeros([n_players,6])

@@ -153,8 +153,8 @@ class DQN_Agent_FC(DQN_Agent_Base):
                 # if several same qvalue, then always the same taken
             masked_qvalues = qvalues.masked_fill(torch.from_numpy(~possible_a_mask).cuda(), float('-inf'))
             max_val = masked_qvalues.max()
-            idxs = torch.where(masked_qvalues == max_val)
-            idx = random.choice(idxs)
+            max_idxs = torch.where(masked_qvalues == max_val)[0]
+            idx = int(random.choice(max_idxs))
             env_action = self.action_interface.decode(idx)
             torch_action = torch.zeros(possible_a_mask.shape[0], dtype=bool)
             torch_action[idx] = 1
