@@ -19,3 +19,9 @@ New architecture (simple version):
 auxiliary_info: previous_tile, current_tiles
 Class of network called PlayerNetwork:
 - Input: previous tile, 
+
+
+
+
+- Is same network used to treat all player's data ? Or specific one for the player ?
+- How

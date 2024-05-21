@@ -211,4 +211,28 @@ for i in range(len(samples)):
     next_obs = (next_board, next_cur_tiles, next_prev_tile)
     display(graphics.draw_encoded_state(next_obs))
     print('Decoded next actions:', ai.decode_actions(next_actions))
+    
+#%% LOAD CHECKPT AND MAKE IT PLAY
+
+from models_directory_utils import load_player, read_experiment
+from run import test_random
+
+log_dir = 'C:/Users/hugom/OneDrive/Documents/ProjetProg/KingdominoAgent/Kingdomino_RL/runs/DQN_FC/210524_023656'
+file_name = 'checkpt.pt'
+experiment = read_experiment(os.path.join(log_dir, 'experiment.txt'))
+n_players = experiment['n_players']
+board_size = experiment['board_size']
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+
+player,n_episodes,best_avg_reward = load_player(
+    n_players=n_players,
+    board_size=board_size,
+    device=device,
+    hp=experiment['hp'],
+    log_dir=log_dir,
+    file_name=file_name)
+
+print(f'Testing player with {n_episodes} episodes of training, {best_avg_reward} best avg reward')
+test_random(env, player, 2, verbose=True)
 

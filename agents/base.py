@@ -10,9 +10,14 @@ class Player(ABC):
     @abstractmethod
     def action(self, state, kingdomino):
         pass
-    @abstractmethod
-    def process_reward(self, reward, next_state, done):
+
+    def process_reward(self, reward, done):
         pass
+    def train(self):
+        pass
+    def test(self):
+        pass
+    
     
 class HumanPlayer(Player):      
     def action(self, state, kingdomino):
@@ -27,8 +32,6 @@ class HumanPlayer(Player):
 class RandomPlayer(Player):
     def action(self, state, kingdomino):
         return random.choice(kingdomino.getPossibleActions())
-    def process_reward(self, reward, next_state, done):
-        pass
 
 
 class LearningAgent(Player, ABC):

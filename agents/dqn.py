@@ -10,9 +10,10 @@ from agents.base import LearningAgent
 from agents.encoding import ActionInterface  
 from utils import cartesian_product
 
-class DQN_Agent_Base(LearningAgent, ABC):
+class DQN_Agent(LearningAgent):
     def __init__(self, 
                  n_players,
+                 board_size,
                  batch_size,
                  eps_scheduler,
                  tau,
@@ -20,15 +21,14 @@ class DQN_Agent_Base(LearningAgent, ABC):
                  gamma,
                  id,
                  action_interface,
+                 Network,
                  exploration_batch_size=1,
                  network_name=None,
-                 hp_archi=None,
+                 network_hp=None,
                  replay_memory_size=None,
                  device='cpu',
                  policy=None,
-                 policy2=None,
                  target=None,
-                 target2=None,
                  memory=None):
         # should be 1 if env on cpu
         self.exploration_batch_size = exploration_batch_size
@@ -38,11 +38,13 @@ class DQN_Agent_Base(LearningAgent, ABC):
         self.lr = lr
         self.device = device
         self.n_players = n_players
+        self.board_size = board_size
         self.id = id
         self.gamma = gamma
         self.memory = memory
         self.action_interface = action_interface
-        self.hp_archi = hp_archi
+        self.network_hp = network_hp
+        self.Network = Network
     
         self.policy = policy
         self.target = target
@@ -55,89 +57,12 @@ class DQN_Agent_Base(LearningAgent, ABC):
         self.train()
         self.reset()
     
-    @abstractmethod
     def setup_networks(self):
-        raise NotImplementedError()
-    @abstractmethod
-    def select_action(self, s, p_a):
-        pass
-    @abstractmethod
-    def get_q_target(self, next_s, r, d, p_a):
-        pass
-    
-    def train(self):
-        self.training = True
-        self.policy.train()
-        self.target.train()
-        
-    def eval(self):
-        self.training = False
-        self.policy.eval()
-        self.target.eval()
-    
-    def optimize(self):
-        if len(self.memory) < self.batch_size:
-            return
-        # Get batch
-        if self.PER():
-            batch, weights, tree_idxs = self.memory.sample(self.batch_size)
-        else:
-            batch = self.memory.sample(self.batch_size)
-        
-        boards_s,cur_tiles_s,prev_tiles_s, \
-        a, r, \
-        boards_next_s, cur_tiles_next_s, prev_tiles_next_s, \
-        d, possible_a = batch
-        
-        # Transfer on accelerator
-        boards_s = boards_s.to(self.device)
-        cur_tiles_s = cur_tiles_s.to(self.device)
-        prev_tiles_s = prev_tiles_s.to(self.device)
-        a = a.to(self.device).bool()
-        r = r.to(self.device)
-        
-        q = self.policy(
-            (boards_s, cur_tiles_s, prev_tiles_s), a).squeeze()
-        
-        next_s = (boards_next_s, cur_tiles_next_s, prev_tiles_next_s)
-        with torch.no_grad():
-            q_target = self.get_q_target(next_s, r, d, possible_a)
-        
-        with torch.no_grad():
-            if self.PER():
-                td_error = torch.abs(q - q_target)
-                self.memory.update_priorities(tree_idxs, td_error.detach().cpu().numpy())
-        if self.PER():
-            loss = torch.mean(self.criterion(q, q_target) * weights.to(self.device))
-        else:
-            loss = torch.mean(self.criterion(q, q_target))
-            
-        self.optimizer.zero_grad()
-        loss.backward()
-        torch.nn.utils.clip_grad_value_(self.policy.parameters(), 100)
-        self.optimizer.step()
-        
-        self.update_target()
-        return {'DQN Loss':loss.item()}
-        
-    @torch.no_grad()
-    def update_target(self):
-        target_net_state_dict = self.target.state_dict()
-        policy_net_state_dict = self.policy.state_dict()
-        for key in policy_net_state_dict:
-            target_net_state_dict[key] = policy_net_state_dict[key]*self.tau + target_net_state_dict[key]*(1-self.tau)
-        self.target.load_state_dict(target_net_state_dict)
-        
-
-    
-class DQN_Agent_FC(DQN_Agent_Base):
-    def setup_networks(self):
-        self.Network = PlayerFocusedFC
         n_actions = self.action_interface.n_actions
         if self.policy is None:
-            self.policy = self.Network(self.n_players, self.hp_archi, self.device, False, n_actions).to(self.device)
+            self.policy = self.Network(self.n_players, self.board_size, self.network_hp, self.device, False, n_actions).to(self.device)
         if self.target is None:
-            self.target = self.Network(self.n_players, self.hp_archi, self.device, False, n_actions).to(self.device)
+            self.target = self.Network(self.n_players, self.board_size, self.network_hp, self.device, False, n_actions).to(self.device)
 
     def select_action(self, s, p_a):
         t,p = p_a # list of possible tiles, possible positions
@@ -166,12 +91,87 @@ class DQN_Agent_FC(DQN_Agent_Base):
                     t[t_idx][None,],
                     p[p_idx][None,]))
     
+    def train(self):
+        self.training = True
+        self.policy.train()
+        self.target.train()
+        
+    def eval(self):
+        self.training = False
+        self.policy.eval()
+        self.target.eval()
+    
+    def optimize(self):
+        if len(self.memory) < self.batch_size:
+            return
+        # Get batch
+        if self.PER():
+            batch, weights, tree_idxs = self.memory.sample(self.batch_size)
+        else:
+            batch = self.memory.sample(self.batch_size)
+        
+        boards_s,cur_tiles_s,prev_tiles_s, \
+        a, r, \
+        boards_next_s, cur_tiles_next_s, prev_tiles_next_s, \
+        d, possible_a = batch
+        
+        # Transfer on accelerator
+        boards_s = boards_s.to(self.device).float()
+        cur_tiles_s = cur_tiles_s.to(self.device).float()
+        prev_tiles_s = prev_tiles_s.to(self.device).float()
+        a = a.to(self.device).bool()
+        r = r.to(self.device)
+        boards_next_s = boards_next_s.to(self.device).float()
+        cur_tiles_next_s = cur_tiles_next_s.to(self.device).float()
+        prev_tiles_next_s = prev_tiles_next_s.to(self.device).float()
+        
+        q = self.policy(
+            {'Boards':boards_s, 
+             'Current tiles':cur_tiles_s, 
+             'Previous tiles': prev_tiles_s}, a).squeeze()
+        q = q[a.nonzero(as_tuple=True)]
+        
+        next_s = {
+            'Boards':boards_next_s, 
+            'Current tiles':cur_tiles_next_s, 
+            'Previous tiles':prev_tiles_next_s}
+        with torch.no_grad():
+            q_target = self.get_q_target(next_s, r, d, possible_a)
+        
+        with torch.no_grad():
+            if self.PER():
+                td_error = torch.abs(q - q_target)
+                self.memory.update_priorities(tree_idxs, td_error.detach().cpu().numpy())
+        if self.PER():
+            loss = torch.mean(self.criterion(q, q_target) * weights.to(self.device))
+        else:
+            loss = torch.mean(self.criterion(q, q_target))
+            
+        self.optimizer.zero_grad()
+        loss.backward()
+        torch.nn.utils.clip_grad_value_(self.policy.parameters(), 100)
+        self.optimizer.step()
+        
+        self.update_target()
+        return {'DQN Loss':loss.item()}
+        
     def get_q_target(self, next_s, r, d, p_a):
         next_q_exhaustive = self.target(next_s)
         masked_next_q = torch.masked_fill(next_q_exhaustive, ~p_a, float('-inf'))
         next_q = masked_next_q.max(1).values
         target = r + (1-d)*self.gamma*next_q
         return target
+    
+    @torch.no_grad()
+    def update_target(self):
+        target_net_state_dict = self.target.state_dict()
+        policy_net_state_dict = self.policy.state_dict()
+        for key in policy_net_state_dict:
+            target_net_state_dict[key] = policy_net_state_dict[key]*self.tau + target_net_state_dict[key]*(1-self.tau)
+        self.target.load_state_dict(target_net_state_dict)
+        
+
+    
 
     
  #%%   

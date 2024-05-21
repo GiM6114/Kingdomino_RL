@@ -15,7 +15,7 @@ class Boards:
         self.reset()
 
     def reset(self):
-        self.nb_planks = 0
+        self.nb_planks = np.zeros(self.n_players)
         
         self.boards = -np.ones(
             [self.n_players, self.size,self.size], 
@@ -40,7 +40,7 @@ class Boards:
         position = position.T
         self.boards[p,position[0],position[1]] = tile[:2]
         if tile[0] != -1:
-            self.nb_planks += 1
+            self.nb_planks[p] += 1
             self.left_most[p] = min(self.left_most[p], np.min(position[0,:]))
             self.right_most[p] = max(self.right_most[p], np.max(position[0,:]))
             self.bottom_most[p] = max(self.bottom_most[p], np.max(position[1,:]))
@@ -61,7 +61,7 @@ class Boards:
         if self.isCastleCentered(p):
             score += 10
         # Harmony
-        if self.nb_planks == self.max_planks:
+        if self.nb_planks[p] == self.max_planks:
             score += 5
         
         return score
@@ -125,8 +125,53 @@ class Boards:
     
     
     def isCastleCentered(self, p):
-        return self.left_most[p] == 2 and self.right_most[p] == 6 and self.bottom_most[p] == 6 and self.top_most[p] == 2
-        
+        return self.left_most[p] == (self.middle-2) and self.right_most[p] == (self.middle+2) and self.bottom_most[p] == (self.middle+2) and self.top_most[p] == (self.middle-2)
+      
+if __name__ == '__main__':
+
+    test_board = Board()
+
+    grass_tiles  = [[4,5],[4,6],[5,5],[5,4],[3,5],[3,6],[6,2]]
+    forest_tiles = [[4,3],[5,3],[6,3],[6,4],[6,5],[6,6],[5,6]]
+    water_tiles  = [[2,6],[2,5],[2,4],[3,4],[3,3],[3,2]]
+    mine_tiles   = [[2,3],[2,2]]
+
+    crown_1 = [(4,5),(4,6),(2,2)]
+    crown_2 = [(5,4)]
+
+    for tiles in [(grass_tiles,0), (water_tiles,3), (mine_tiles,5), (forest_tiles,1)]:
+        v = tiles[1]
+        for tile in tiles[0]:
+            test_board.setBoard(tuple(tile), v)
+
+    for i,crown in enumerate([crown_1, crown_2]):
+        for pos in crown:
+            test_board.setBoardCrown(pos, i+1)
+
+    print('Should be 36 : ', test_board.count())
+
+    test_board = Board()
+
+    grass_tiles  = [[4,5],[4,6],[5,5],[5,4],[3,5],[3,6],[6,2]]
+    forest_tiles = [[4,3],[5,3],[6,3],[6,4],[6,5],[6,6],[5,6]]
+    water_tiles  = [[3,4],[3,3],[3,2]]
+    mine_tiles   = []
+
+    crown_1 = [(4,5),(4,6),(2,2)]
+    crown_2 = [(5,4)]
+
+    for tiles in [(grass_tiles,0), (water_tiles,3), (mine_tiles,5), (forest_tiles,1)]:
+        v = tiles[1]
+        for tile in tiles[0]:
+            test_board.setBoard(tuple(tile), v)
+
+    for i,crown in enumerate([crown_1, crown_2]):
+        for pos in crown:
+            test_board.setBoardCrown(pos, i+1)
+
+    print('Should be 24 : ', test_board.count())
+
+    
 #%%
 # class Board:
 #     def __init__(self, size):

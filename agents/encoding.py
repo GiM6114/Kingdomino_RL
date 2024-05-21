@@ -10,6 +10,8 @@ from utils import cartesian_product
 
 # 2*N_TILE_TYPES + 2 + 1 : one hot encoded tiles + crowns + value of tile
 TILE_ENCODING_SIZE = 2*(N_TILE_TYPES+1) + 2 + 1
+CUR_TILES_ENCODING_SIZE = TILE_ENCODING_SIZE + 1
+BOARD_CHANNELS = N_TILE_TYPES+2
 
 def arr2tuple(a):
     try:
@@ -54,7 +56,7 @@ def current_tiles_encoding(current_tiles, n_players, device='cpu'):
     current_tiles_info = torch.zeros([
         batch_size,
         n_players,
-        TILE_ENCODING_SIZE+1],
+        CUR_TILES_ENCODING_SIZE],
         dtype=torch.int8,
         device=device)
     current_tiles_info[:,:,:-1] = tiles_encoding(current_tiles[:,:,:-1], n_players, device)
@@ -87,7 +89,7 @@ def boards_encoding(boards, n_players, device='cpu'):
     boards_one_hot = torch.zeros([
         batch_size,
         n_players,
-        N_TILE_TYPES+3,
+        BOARD_CHANNELS+1,
         board_size,board_size],
         dtype=torch.int8,
         device=device)
@@ -114,9 +116,11 @@ def actions_encoding(actions, n_players, device='cpu', positions_onehot=False):
     return actions_conc_one_hot_tile_id
 
 
+# only works for no batch, single input...
+# (it is ok because only needed when environment used,
+# but will be annoying if parallelization several envs)
 def state_encoding(state, n_players, device='cpu'):
-    boards = boards_encoding(torch.as_tensor(state['Boards'], device=device).unsqueeze(0), n_players, device)
-    current_tiles = current_tiles_encoding(torch.as_tensor(state['Current tiles'], device=device).unsqueeze(0), n_players, device)
-    previous_tiles = tiles_encoding(torch.as_tensor(state['Previous tiles'], device=device).unsqueeze(0), n_players, device)
-    
+    boards = boards_encoding(torch.as_tensor(state['Boards'], device=device).unsqueeze(0), n_players, device).float()
+    current_tiles = current_tiles_encoding(torch.as_tensor(state['Current tiles'], device=device).unsqueeze(0), n_players, device).float()
+    previous_tiles = tiles_encoding(torch.as_tensor(state['Previous tiles'], device=device).unsqueeze(0), n_players, device).float()  
     return {'Boards':boards, 'Current tiles':current_tiles, 'Previous tiles':previous_tiles}

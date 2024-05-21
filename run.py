@@ -60,7 +60,7 @@ def train(env, players, n_episodes):
         rewards_tracker[i] = sum_rewards
     return rewards_tracker
       
-def test_random(env, player, n_episodes):
+def test_random(env, player, n_episodes, verbose=False):
     with torch.no_grad():
         player.eval()
         random_player = agents.base.RandomPlayer()
@@ -72,15 +72,20 @@ def test_random(env, player, n_episodes):
             d = False
             while not d:
                 for p_id in env.order:
-                    # print('State:')
-                    # display(draw_obs(s))
+                    if verbose:
+                        print(f"Player {p_id}'s turn")
+                        print('State:')
+                        display(draw_obs(s))
                     a = players[p_id].action(s, env)
                     s,d,info = env.step(a)
-                    # print('Action:', a)
-                    # display(draw_obs(s))
-                    # print('Reward:', env.getReward(p_id))
-                    # print('Done:', d)
-                    # print('Info', info)
+                    if verbose:
+                        print('Action:', a)
+                        print('Next state:')
+                        display(draw_obs(s))
+                        print('Reward:', env.getReward(p_id))
+                        print('Done:', d)
+                        print('Info', info)
+                        print('########################')
                     if d:
                         scores[i] = info['Scores']
                         break

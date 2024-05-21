@@ -5,81 +5,13 @@ import torch
 from einops import rearrange
 
 from setup import N_TILE_TYPES, TILE_SIZE
-from agents.encoding import TILE_ENCODING_SIZE, state_encoding
-
-
+from agents.encoding import TILE_ENCODING_SIZE, CUR_TILES_ENCODING_SIZE, BOARD_CHANNELS, state_encoding
+from base_networks import CNNFC, FC, AdaptiveCNN
 
 # use adaptive CNN
-# maybe use different network for current player and other players...
-# ...because current player is not just any player !
+# try with different and same network for main player and other players
 # give as input to the current player network not just board
 # and previous tile, but also action (as auxiliary info of the ACNN)
-
-
-    
-class FC(nn.Module):
-    def __init__(self, input_size, output_size, l, n):
-        super(FC, self).__init__()
-        prev_n = input_size
-        layers = []
-        for i in range(l):
-            layers.append(nn.Linear(prev_n, n[i]))  # Hidden layers
-            layers.append(nn.SELU())  # Activation function
-            prev_n = n[i]
-        layers.append(nn.Linear(prev_n, output_size))
-        layers.append(nn.SELU())  # Activation function
-        self.layers = nn.ModuleList(layers)
-
-    def forward(self, x):
-        for layer in self.layers:
-            x = layer(x)
-        return x
-    
-class AdaptiveCNN(nn.Module):
-    def __init__(
-            self, aux_info_size, in_channels,
-            conv_channels, conv_kernel_size, conv_stride, l,
-            pool_place, pool_kernel_size, pool_stride,
-            FMN_l, FMN_n):
-        super(AdaptiveCNN, self).__init__()
-        
-        prev_n_channels = in_channels
-        FMNs = []
-        for i in range(l):
-            parameters_size = (prev_n_channels*conv_channels[i]*(conv_kernel_size[i]**2))+conv_channels[i]
-            FMNs.append(FC(aux_info_size, parameters_size, FMN_l, FMN_n))
-            prev_n_channels = conv_channels[i]
-        self.FMNs = nn.ModuleList(FMNs)
-        
-        self.conv_stride = conv_stride
-        self.in_channels = in_channels
-        self.conv_kernel_size = conv_kernel_size
-        self.conv_channels = conv_channels
-        self.pool_place = pool_place
-        self.pool_kernel_size = pool_kernel_size
-        self.pool_stride = pool_stride
-        self.l = l
-        
-    def forward(self, main, side):
-        prev_n_channels = self.in_channels
-        for i in range(self.l):
-            wb = self.FMNs[i](side) # (batch,(kernel_size**2)*prev_n_channels*n_channels + n_channels)
-            w = wb[:,:-self.conv_channels[i]].reshape(main.shape[0], self.conv_channels[i], prev_n_channels, self.conv_kernel_size[i], self.conv_kernel_size[i])
-            b = wb[:,-self.conv_channels[i]:]
-            pad = self.conv_kernel_size[i]//2
-            original_main_shape = main.shape
-            main = F.pad(main, (pad,pad,pad,pad), 'constant', -1) # pad each dimensions
-            main = F.conv2d(
-                input=main.reshape((1,-1)+main.shape[2:]), 
-                weight=w.reshape((-1,)+w.shape[2:]),
-                bias=b.reshape((-1,)+b.shape[2:]),
-                groups=w.shape[0]).reshape((original_main_shape[0], w.shape[1])+original_main_shape[2:])
-            if self.pool_place[i] != 0:
-                main = F.max_pool2d(main, self.pool_kernel_size[i], self.pool_stride[i])
-            main = F.selu(main)
-            prev_n_channels = self.conv_channels[i]
-        return main
-
 
 class DQN(nn.Module):
     def __init__(self,
@@ -110,20 +42,89 @@ class DQN(nn.Module):
         x = self.action_and_shared(x)
         return x
     
+class PlayerEncoder(nn.Module):
+    def __init__(
+            self,
+            board_encoder,
+            prev_tile_encoder,
+            joint_encoder,
+            board_size):
+        super().__init__()
+        self.board_encoder = CNNFC(
+            input_channels=BOARD_CHANNELS,
+            cnn_layers_params=board_encoder['cnn'],
+            fc_layers_params=board_encoder['fc'],
+            expected_inpt_size=board_size)
+        
+        self.prev_tile_encoder = FC(
+            TILE_ENCODING_SIZE,
+            **prev_tile_encoder)
+        
+        shared_input = \
+            board_encoder['fc']['output_size'] + \
+            prev_tile_encoder['output_size']
+        self.shared = FC(
+            shared_input,
+            **joint_encoder)
+        
+    def forward(self, boards, prev_tiles):
+        board_encoded = self.board_encoder(boards)
+        prev_tile_encoded = self.prev_tile_encoder(prev_tiles)
+        encoded = torch.concatenate(
+            (board_encoded,prev_tile_encoded), dim=1)
+        return self.shared(encoded)
 
+# Encoder: shared player encoder
+class ConvShared(nn.Module):
+    def __init__(self, n_players, board_size, network_hp, device, action_in_input, n_actions):
+        super().__init__()
+        self.device = device
+        # shared by all players
+        self.player_encoder = PlayerEncoder(
+            board_size=board_size,
+            **network_hp['player_encoder']).to(self.device)
+
+        self.cur_tiles_encoder = FC(
+            CUR_TILES_ENCODING_SIZE*n_players,
+            **network_hp['cur_tiles_encoder']).to(self.device)
+        
+        self.final_fc = FC(
+            input_size=network_hp['player_encoder']['joint_encoder']['output_size']*n_players + network_hp['cur_tiles_encoder']['output_size'], 
+            output_size=n_actions, 
+            **network_hp['joint_encoder']).to(self.device)
+    
+    def filter_encoded_state(self, encoded_state):
+        # all info is used
+        pass
+    
+    def forward(self, state, action=None):
+        boards = state['Boards']
+        prev_tiles = state['Previous tiles']
+        cur_tiles = state['Current tiles']
+        batch_size = boards.shape[0]
+        boards = rearrange(boards, 'b p c w h -> (b p) c w h')
+        prev_tiles = rearrange(prev_tiles, 'b p t -> (b p) t')
+        encoded_players = self.player_encoder(boards, prev_tiles)
+        # concatenate player vectors of the same batch
+        player_vectors = rearrange(
+            encoded_players, '(b p) v -> b (p v)',
+            b=batch_size)
+        encoded_cur_tiles = self.cur_tiles_encoder(cur_tiles)
+        mix_input = torch.concatenate((player_vectors,encoded_cur_tiles), dim=1)
+        output = self.final_fc(mix_input)
+        return output
 
 
 
 
 # Takes the whole board as input of a FC
 class PlayerFocusedFC(nn.Module):
-    def __init__(self, n_players, network_info, device, action_in_input, output_dim, action_interface=None):
+    def __init__(self, n_players, grid_size, network_info, device, action_in_input, output_dim, action_interface=None):
         super().__init__()
         self.n_players = n_players
         self.device = device
         self.action_in_input = action_in_input
         self.action_interface = action_interface
-        grid_size = network_info['grid_size']
         # board + cur_tiles_info + cur_tiles_belong_player + prev_tile
         state_size = 8*(grid_size**2) + TILE_ENCODING_SIZE*(n_players+1) + n_players
         action_size = n_players + 4
