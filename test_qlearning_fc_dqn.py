@@ -75,7 +75,7 @@ if __name__ == '__main__':
     #%%
 
     Printer.activated = False
-    n_itrs = 150
+    n_itrs = 500
     n_train_episodes = 100
     n_test_episodes = 20
     for i in range(n_itrs):
@@ -88,7 +88,7 @@ if __name__ == '__main__':
         rewards_train_player_1 = train_rewards[:,0].mean()        
         score_test_player_1 = test_scores[:,0].mean()
         score_random = test_scores[:,1].mean()
-        logger.log('Train rewards after {n_episodes}: {score_train_player_1} ')
+        logger.log(f'Train rewards after {n_episodes}: {rewards_train_player_1} ')
         logger.log(f'Test score against random after {n_episodes}: {score_test_player_1}')
         logger.log(f'Score of random: {score_random}')
         logger.add_scalars('test_scores', 

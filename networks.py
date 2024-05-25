@@ -74,6 +74,13 @@ class PlayerEncoder(nn.Module):
             (board_encoded,prev_tile_encoded), dim=1)
         return self.shared(encoded)
 
+
+class ConvSharedSequential(nn.Module):
+    def __init__(self, n_players, board_size, network_hp, device, action_in_input, n_actions):
+        self.position_agent = ConvShared()
+        self.tile_selection_agent = ConvShared()
+
+
 # Encoder: shared player encoder
 class ConvShared(nn.Module):
     def __init__(self, n_players, board_size, network_hp, device, action_in_input, n_actions):

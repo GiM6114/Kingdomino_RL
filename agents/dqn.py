@@ -18,6 +18,7 @@ class DQN_Agent(LearningAgent):
                  eps_scheduler,
                  tau,
                  lr,
+                 double,
                  gamma,
                  id,
                  action_interface,
@@ -45,6 +46,11 @@ class DQN_Agent(LearningAgent):
         self.action_interface = action_interface
         self.network_hp = network_hp
         self.Network = Network
+        self.double = double
+        if self.double:
+            self.get_q_target = self.double_dqn_target
+        else:
+            self.get_q_target = self.dqn_target
     
         self.policy = policy
         self.target = target
@@ -77,6 +83,9 @@ class DQN_Agent(LearningAgent):
                 # returns id of the MASKED array so idx is wrong
                 # if several same qvalue, then always the same taken
             masked_qvalues = qvalues.masked_fill(torch.from_numpy(~possible_a_mask).cuda(), float('-inf'))
+            # for i,v in enumerate(possible_a_mask):
+            #     if v:
+            #         print(self.action_interface.decode(i), ':', masked_qvalues[i].item())
             max_val = masked_qvalues.max()
             max_idxs = torch.where(masked_qvalues == max_val)[0]
             idx = int(random.choice(max_idxs))
@@ -154,11 +163,19 @@ class DQN_Agent(LearningAgent):
         
         self.update_target()
         return {'DQN Loss':loss.item()}
+
         
-    def get_q_target(self, next_s, r, d, p_a):
+    def dqn_target(self, next_s, r, d, p_a):
         next_q_exhaustive = self.target(next_s)
         masked_next_q = torch.masked_fill(next_q_exhaustive, ~p_a, float('-inf'))
         next_q = masked_next_q.max(1).values
+        target = r + (1-d)*self.gamma*next_q
+        return target
+    def double_dqn_target(self, next_s, r, d, p_a):
+        next_q_exhaustive = self.policy(next_s)
+        masked_next_q = torch.masked_fill(next_q_exhaustive, ~p_a, float('-inf'))
+        next_q_id = masked_next_q.max(1).indices
+        next_q = self.target(next_s).gather(1, next_q_id.unsqueeze(1)).squeeze()
         target = r + (1-d)*self.gamma*next_q
         return target
     

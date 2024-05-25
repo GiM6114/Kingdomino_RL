@@ -183,14 +183,14 @@ class ReplayBuffer:
         # state: boards, current_tiles, previous_tiles       
         self.boards_state = torch.empty(buffer_size, *boards_state_size, dtype=torch.int, device=self.device)
         self.cur_tiles_state = torch.empty(buffer_size, cur_tiles_state_size, dtype=torch.int, device=self.device)
-        self.prev_tiles_state = torch.empty(buffer_size, prev_tiles_state_size, dtype=torch.int, device=self.device)
+        self.prev_tiles_state = torch.empty(buffer_size, *prev_tiles_state_size, dtype=torch.int, device=self.device)
         
         self.action = torch.empty(buffer_size, action_size, dtype=torch.int, device=self.device)
         self.reward = torch.empty(buffer_size, dtype=torch.float, device=self.device)
         
         self.boards_next_state = torch.empty(buffer_size, *boards_state_size, dtype=torch.int, device=self.device)
         self.cur_tiles_next_state = torch.empty(buffer_size, cur_tiles_state_size, dtype=torch.int, device=self.device)
-        self.prev_tiles_next_state = torch.empty(buffer_size, prev_tiles_state_size, dtype=torch.int, device=self.device)
+        self.prev_tiles_next_state = torch.empty(buffer_size, *prev_tiles_state_size, dtype=torch.int, device=self.device)
         
         self.done = torch.empty(buffer_size, dtype=torch.int, device=self.device)
         

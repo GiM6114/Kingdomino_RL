@@ -214,16 +214,20 @@ for i in range(len(samples)):
     
 #%% LOAD CHECKPT AND MAKE IT PLAY
 
+import os
+import torch
+
 from models_directory_utils import load_player, read_experiment
 from run import test_random
+from config import reward_fns
+import kingdomino
 
-log_dir = 'C:/Users/hugom/OneDrive/Documents/ProjetProg/KingdominoAgent/Kingdomino_RL/runs/DQN_FC/210524_023656'
-file_name = 'checkpt.pt'
+log_dir = 'C:/Users/hugom/OneDrive/Documents/ProjetProg/KingdominoAgent/Kingdomino_RL/runs/DQN_FC/210524_145910'
+file_name = 'best_checkpt.pt'
 experiment = read_experiment(os.path.join(log_dir, 'experiment.txt'))
 n_players = experiment['n_players']
 board_size = experiment['board_size']
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
-
 
 player,n_episodes,best_avg_reward = load_player(
     n_players=n_players,
@@ -233,6 +237,11 @@ player,n_episodes,best_avg_reward = load_player(
     log_dir=log_dir,
     file_name=file_name)
 
+env = kingdomino.kingdomino.Kingdomino(
+    n_players=experiment['n_players'],
+    board_size=board_size,
+    reward_fn=reward_fns[experiment['hp']['reward_name_id']])
+
 print(f'Testing player with {n_episodes} episodes of training, {best_avg_reward} best avg reward')
-test_random(env, player, 2, verbose=True)
+test_random(env, player, 5, verbose=True)
 
