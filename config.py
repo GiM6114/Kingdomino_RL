@@ -1,6 +1,7 @@
 from kingdomino.rewards import player_focused_reward
 from networks import PlayerFocusedFC, ConvShared 
 
+action_types = ['singular', 'sequential']
 network_types = [PlayerFocusedFC, ConvShared]
 reward_fns = [player_focused_reward]
 opponents = ['self', 'random']
@@ -45,7 +46,7 @@ hp = {'batch_size':256,
       'double':True,
       'PER':True,
       'reward_name_id':0,
-      'opponent_type_id':1,
+      'opponent_type':'random',
       # Exploration
       'eps_start':0.9,
       'eps_end':0.01,
@@ -54,7 +55,8 @@ hp = {'batch_size':256,
       'eps_restart':0.5,
       # Architecture
       'network_type':1,
-      'network_hp':network_hp
+      'network_hp':network_hp,
+      'action_type':'sequential',
       }
 
 experiment = {

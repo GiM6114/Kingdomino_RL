@@ -5,48 +5,130 @@ from operator import itemgetter
 from itertools import product
 
 from setup import N_TILE_TYPES
-from kingdomino.utils import action2id2action, get_n_actions
+from kingdomino.utils import compute_n_positions, compute_n_actions
 from utils import cartesian_product
+from kingdomino.kingdomino import Kingdomino
 
 # 2*N_TILE_TYPES + 2 + 1 : one hot encoded tiles + crowns + value of tile
 TILE_ENCODING_SIZE = 2*(N_TILE_TYPES+1) + 2 + 1
 CUR_TILES_ENCODING_SIZE = TILE_ENCODING_SIZE + 1
 BOARD_CHANNELS = N_TILE_TYPES+2
 
-def arr2tuple(a):
-    try:
-        return tuple(arr2tuple(i) for i in a)
-    except TypeError:
-        return a
-
 class ActionInterface:
-    # Interface between DQN FC and Kingdomino's action spaces
-    def __init__(self, board_size, n_players):
+    def encode(self, action):
+        print('Action',action)
+        if len(action) == 1:
+            actions_id = self.action2id[action[0]]
+        else:
+            actions_id = list(itemgetter(*action)(self.action2id))
+        actions = np.zeros(self.n_actions, dtype=bool)
+        print(actions_id)
+        actions[actions_id] = 1
+        return actions
+    
+    def expand_possible_actions(self, p_a):
+        return p_a
+    
+    # network --> Kingdomino
+    def decode_action_id(self, action_id):
+        return self.id2action[action_id]
+    
+    # returns the list of actions where actions_id == 1
+    def decode_action_vector(self, actions_id):
+        ids = np.where(actions_id.cpu().numpy() == 1)
+        actions = list(itemgetter(*list(ids[0]))(self.id2action))
+        return actions
+
+class CoordinateInterface(ActionInterface):
+    def __init__(self, board_size):
+        self.board_size = board_size
+        self.n_actions = compute_n_positions(board_size) + 1
+        self.action2id,self.id2action = CoordinateInterface.coordinate2id2coordinate(board_size)
+    
+    def coordinate2id2coordinate(board_size):
+        middle = board_size // 2
+        action2id = {}
+        id2action = []
+        for i in range(board_size):
+            for j in range(board_size):
+                for ii in range(-1,2):
+                    for jj in range(-1,2):
+                        if i+ii < 0 or i+ii > board_size-1 or j+jj < 0 or j+jj > board_size - 1:
+                            continue
+                        if (abs(ii) == abs(jj)):
+                            continue
+                        if (i == middle and j == middle) or (i+ii == middle and j+jj == middle):
+                            continue
+                        pos = ((i,j),(i+ii,j+jj))
+                        action2id[pos] = len(id2action)
+                        id2action.append(np.array(pos))
+        # Discard tile
+        pos = tuple(map(tuple, Kingdomino.discard_tile))
+        action2id[pos] = len(id2action)
+        id2action.append(pos)               
+        return action2id,id2action
+    
+class TileInterface(ActionInterface):
+    def __init__(self, n_players):
         self.n_players = n_players
-        self.n_actions = get_n_actions(board_size, n_players)
-        self.action2id,self.id2action = action2id2action(board_size, n_players)
+        self.n_actions = self.n_players
+        self.action2id,self.id2action = TileInterface.tile2id2tile(n_players)
+
+    def tile2id2tile(n_players):
+        id2action = [(i,) for i in range(-1,n_players)]
+        action2id = {(i-1,):i for i in range(n_players)}
+        return id2action,action2id        
+
+class TileCoordinateInterface(ActionInterface):
+    def __init__(self, n_players, board_size):
+        self.n_players = n_players
+        self.board_size = board_size
+        self.n_actions = (n_players+1)*(compute_n_positions(board_size)+1)
+        self.action2id,self.id2action = TileCoordinateInterface.action2id2action(n_players, board_size)
+    
+    def expand_possible_actions(self, p_a):
+        print(p_a)
+        return list(product(*p_a))
     
     # tiles: np array of possible tiles (ex: 0,2)
     # positions: np array of possible positions
-    def encode(self, tiles, positions):        
-        if len(tiles) == 1 and len(positions) == 1:
-            positions = arr2tuple(positions[0])
-            actions_id = self.action2id[(tiles.item(), positions)]
+    def encode(self, action):
+        print('Action to encode', action)
+        if len(action) == 1:
+            actions_id = self.action2id[(action[0][0], action[0][1])]
         else:
-            positions = arr2tuple(positions)
-            all_pa = list(product(tiles, positions))
-            actions_id = list(itemgetter(*all_pa)(self.action2id))
+            actions_id = list(itemgetter(*action)(self.action2id))
         actions = np.zeros(self.n_actions, dtype=bool)
         actions[actions_id] = 1
         return actions
-   
-    # network --> Kingdomino
-    def decode(self, action_id):
-        return self.id2action[action_id]
     
-    def decode_actions(self, actions_id):
-        ids = np.where(actions_id.cpu().numpy() == 1)
-        return list(itemgetter(*list(ids[0]))(self.id2action))
+    def action2id2action(n_players, board_size):
+        middle = board_size // 2
+        action2id = {}
+        id2action = []
+        for i in range(board_size):
+            for j in range(board_size):
+                for ii in range(-1,2):
+                    for jj in range(-1,2):
+                        if i+ii < 0 or i+ii > board_size-1 or j+jj < 0 or j+jj > board_size - 1:
+                            continue
+                        if (abs(ii) == abs(jj)):
+                            continue
+                        if (i == middle and j == middle) or (i+ii == middle and j+jj == middle):
+                            continue
+                        pos = ((i,j),(i+ii,j+jj))
+                        
+                        for p in list(range(-1,n_players)):
+                            action2id[(p,pos)] = len(id2action)
+                            id2action.append((p,np.array(pos)))
+        # Discard tile
+        pos = tuple(map(tuple, Kingdomino.discard_tile))
+        for p in list(range(-1,n_players)):
+            action2id[(p,pos)] = len(id2action)
+            id2action.append((p,pos))
+        return action2id,id2action
+   
+
 
 # Assumes the observation at 0 is current player
 # Additional information : taken or not (TODO: and by whom)
@@ -123,4 +205,7 @@ def state_encoding(state, n_players, device='cpu'):
     boards = boards_encoding(torch.as_tensor(state['Boards'], device=device).unsqueeze(0), n_players, device).float()
     current_tiles = current_tiles_encoding(torch.as_tensor(state['Current tiles'], device=device).unsqueeze(0), n_players, device).float()
     previous_tiles = tiles_encoding(torch.as_tensor(state['Previous tiles'], device=device).unsqueeze(0), n_players, device).float()  
-    return {'Boards':boards, 'Current tiles':current_tiles, 'Previous tiles':previous_tiles}
+    state['Boards'] = boards
+    state['Current tiles'] = current_tiles
+    state['Previous tiles'] = previous_tiles
+    return state

@@ -7,50 +7,121 @@ from networks import PlayerFocusedFC, PlayerFocusedACNN
 from prioritized_experience_replay import PrioritizedReplayBuffer
 from agents.encoding import state_encoding
 from agents.base import LearningAgent
-from agents.encoding import ActionInterface  
+from agents.encoding import TileInterface, CoordinateInterface  
 from utils import cartesian_product
+from epsilon_scheduler import EpsilonDecayRestart
+from prioritized_experience_replay import ReplayBuffer, PrioritizedReplayBuffer
+from agents.encoding import ActionInterface, BOARD_CHANNELS, TILE_ENCODING_SIZE, CUR_TILES_ENCODING_SIZE
+from kingdomino.utils import compute_n_positions
 
+class SequentialDQN_AgentInterface:
+    def __init__(self, **kwargs):
+        self.tile_selector = DQN_Agent(
+            n_actions=kwargs['n_players'],
+            action_interface=TileInterface(kwargs['n_players']),
+            **kwargs)
+        self.coordinate_selector = DQN_Agent(
+            n_actions=compute_n_positions(kwargs['board_size'])+1,
+            action_interface=CoordinateInterface(kwargs['board_size']),
+            action_input=kwargs['n_players'],
+            encode_state=False,
+            **kwargs)
+    
+    @torch.no_grad()
+    def action(self, s, p_a):
+        print('Sequential action p_a',p_a)
+        t,p = p_a
+        print(t)
+        selected_tile = self.tile_selector.action(s, t)
+        print('Sequential action', selected_tile)
+        # augment state with previous action
+        s['Actions'] = selected_tile
+        selected_coordinate = self.coordinate_selector.action(s, p)
+        return selected_tile,selected_coordinate
+    
+    def process_reward(self, r, d):
+        self.tile_selector.process_reward(r, d)
+        self.coordinate_selector.process_reward(r, d)
+    
+    
+    def reset(self):
+        self.tile_selector.reset()
+        self.coordinate_selector.reset()
+        
+    def train(self):
+        self.tile_selector.train()
+        self.coordinate_selector.train()
+        
+    def test(self):
+        self.tile_selector.test()
+        self.coordinate_selector.test()
+        
+    
+    
 class DQN_Agent(LearningAgent):
     def __init__(self, 
                  n_players,
                  board_size,
-                 batch_size,
-                 eps_scheduler,
-                 tau,
-                 lr,
-                 double,
-                 gamma,
                  id,
-                 action_interface,
                  Network,
+                 n_actions,
+                 eps_scheduler=None,
+                 action_interface=None,
                  exploration_batch_size=1,
                  network_name=None,
-                 network_hp=None,
-                 replay_memory_size=None,
+                 hp=None,
                  device='cpu',
                  policy=None,
                  target=None,
-                 memory=None):
+                 action_input=0,
+                 encode_state=True):
+        super().__init__(encode_state)
         # should be 1 if env on cpu
         self.exploration_batch_size = exploration_batch_size
-        self.batch_size = batch_size
+        self.batch_size = hp['batch_size']
+        
+        # EPS SCHEDULER
+        if eps_scheduler is None:
+            eps_scheduler = EpsilonDecayRestart(
+                eps_start=hp['eps_start'],
+                eps_end=hp['eps_end'],
+                eps_decay=hp['eps_decay'],
+                eps_restart=hp['eps_restart'],
+                eps_restart_threshold=hp['eps_restart_threshold'])
         self.eps_scheduler = eps_scheduler
-        self.tau = tau
-        self.lr = lr
+        
+        network_hp = hp['network_hp']
+        
+        self.tau = hp['tau']
+        self.lr = hp['lr']
         self.device = device
         self.n_players = n_players
         self.board_size = board_size
         self.id = id
-        self.gamma = gamma
+        self.gamma = hp['gamma']
+        self.n_actions = n_actions
+        
+        # MEMORY
+        Memory = PrioritizedReplayBuffer if hp['PER'] else ReplayBuffer
+        memory = Memory(
+            boards_state_size=(n_players,BOARD_CHANNELS,board_size,board_size),
+            cur_tiles_state_size=(CUR_TILES_ENCODING_SIZE)*n_players,
+            prev_tiles_state_size=(n_players, TILE_ENCODING_SIZE),
+            action_size=self.n_actions,
+            buffer_size=hp['replay_memory_size'],
+            fixed_possible_actions_size=self.n_actions,
+            device=device)    
         self.memory = memory
+        
         self.action_interface = action_interface
         self.network_hp = network_hp
         self.Network = Network
-        self.double = double
+        self.double = hp['double']
         if self.double:
             self.get_q_target = self.double_dqn_target
         else:
             self.get_q_target = self.dqn_target
+        self.action_input = action_input
     
         self.policy = policy
         self.target = target
@@ -58,47 +129,68 @@ class DQN_Agent(LearningAgent):
         
         self.target.load_state_dict(self.policy.state_dict())
         
-        self.optimizer = torch.optim.AdamW(self.policy.parameters(), lr=lr, amsgrad=True)
+        self.optimizer = torch.optim.AdamW(self.policy.parameters(), lr=self.lr, amsgrad=True)
         self.criterion = nn.SmoothL1Loss(reduction='none')
         self.train()
         self.reset()
     
     def setup_networks(self):
-        n_actions = self.action_interface.n_actions
+        n_actions = self.n_actions
         if self.policy is None:
-            self.policy = self.Network(self.n_players, self.board_size, self.network_hp, self.device, False, n_actions).to(self.device)
+            self.policy = self.Network(self.n_players, self.board_size, self.network_hp, self.device, self.action_input, n_actions).to(self.device)
         if self.target is None:
-            self.target = self.Network(self.n_players, self.board_size, self.network_hp, self.device, False, n_actions).to(self.device)
+            self.target = self.Network(self.n_players, self.board_size, self.network_hp, self.device, self.action_input, n_actions).to(self.device)
 
     def select_action(self, s, p_a):
-        t,p = p_a # list of possible tiles, possible positions
         if self.training:
             sample = random.random()
             eps_threshold = self.eps_scheduler.eps() 
         if not self.training or sample > eps_threshold:
             # pick action with max qvalue among possible actions
-            possible_a_mask = self.action_interface.encode(t, p)
-            qvalues = self.policy(s).squeeze() # policy should output qvalues for EVERY action
-            # 2 pbs:
-                # returns id of the MASKED array so idx is wrong
-                # if several same qvalue, then always the same taken
+            possible_a_mask = self.action_interface.encode(p_a)
+            qvalues = self.policy(s).squeeze()
             masked_qvalues = qvalues.masked_fill(torch.from_numpy(~possible_a_mask).cuda(), float('-inf'))
-            # for i,v in enumerate(possible_a_mask):
-            #     if v:
-            #         print(self.action_interface.decode(i), ':', masked_qvalues[i].item())
             max_val = masked_qvalues.max()
             max_idxs = torch.where(masked_qvalues == max_val)[0]
             idx = int(random.choice(max_idxs))
-            env_action = self.action_interface.decode(idx)
+            env_action = self.action_interface.decode_action_id(idx)
             torch_action = torch.zeros(possible_a_mask.shape[0], dtype=bool)
             torch_action[idx] = 1
             return env_action,torch_action # actual action,action to register in buffer
-        t_idx = random.randint(0, len(t)-1)
-        p_idx = random.randint(0, len(p)-1)
-        return ((t[t_idx],p[p_idx]),
-                self.action_interface.encode(
-                    t[t_idx][None,],
-                    p[p_idx][None,]))
+        print(p_a)
+        a_idx = random.randint(0, len(p_a)-1)
+        print('TESTSTSTST')
+        return (p_a[a_idx],self.action_interface.encode((p_a[a_idx],)))
+
+    # def select_action(self, s, p_a):
+    #     t,p = p_a # list of possible tiles, possible positions
+    #     if self.training:
+    #         sample = random.random()
+    #         eps_threshold = self.eps_scheduler.eps() 
+    #     if not self.training or sample > eps_threshold:
+    #         # pick action with max qvalue among possible actions
+    #         possible_a_mask = self.action_interface.encode(t, p)
+    #         qvalues = self.policy(s).squeeze() # policy should output qvalues for EVERY action
+    #         # 2 pbs:
+    #             # returns id of the MASKED array so idx is wrong
+    #             # if several same qvalue, then always the same taken
+    #         masked_qvalues = qvalues.masked_fill(torch.from_numpy(~possible_a_mask).cuda(), float('-inf'))
+    #         # for i,v in enumerate(possible_a_mask):
+    #         #     if v:
+    #         #         print(self.action_interface.decode(i), ':', masked_qvalues[i].item())
+    #         max_val = masked_qvalues.max()
+    #         max_idxs = torch.where(masked_qvalues == max_val)[0]
+    #         idx = int(random.choice(max_idxs))
+    #         env_action = self.action_interface.decode(idx)
+    #         torch_action = torch.zeros(possible_a_mask.shape[0], dtype=bool)
+    #         torch_action[idx] = 1
+    #         return env_action,torch_action # actual action,action to register in buffer
+    #     t_idx = random.randint(0, len(t)-1)
+    #     p_idx = random.randint(0, len(p)-1)
+    #     return ((t[t_idx],p[p_idx]),
+    #             self.action_interface.encode(
+    #                 t[t_idx][None,],
+    #                 p[p_idx][None,]))
     
     def train(self):
         self.training = True
@@ -137,7 +229,7 @@ class DQN_Agent(LearningAgent):
         q = self.policy(
             {'Boards':boards_s, 
              'Current tiles':cur_tiles_s, 
-             'Previous tiles': prev_tiles_s}, a).squeeze()
+             'Previous tiles': prev_tiles_s}).squeeze()
         q = q[a.nonzero(as_tuple=True)]
         
         next_s = {

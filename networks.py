@@ -83,8 +83,9 @@ class ConvSharedSequential(nn.Module):
 
 # Encoder: shared player encoder
 class ConvShared(nn.Module):
-    def __init__(self, n_players, board_size, network_hp, device, action_in_input, n_actions):
+    def __init__(self, n_players, board_size, network_hp, device, action_input, n_actions):
         super().__init__()
+        self.action_input = action_input
         self.device = device
         # shared by all players
         self.player_encoder = PlayerEncoder(
@@ -92,7 +93,7 @@ class ConvShared(nn.Module):
             **network_hp['player_encoder']).to(self.device)
 
         self.cur_tiles_encoder = FC(
-            CUR_TILES_ENCODING_SIZE*n_players,
+            CUR_TILES_ENCODING_SIZE*n_players + action_input,
             **network_hp['cur_tiles_encoder']).to(self.device)
         
         self.final_fc = FC(
@@ -104,7 +105,7 @@ class ConvShared(nn.Module):
         # all info is used
         pass
     
-    def forward(self, state, action=None):
+    def forward(self, state):
         boards = state['Boards']
         prev_tiles = state['Previous tiles']
         cur_tiles = state['Current tiles']
@@ -116,7 +117,10 @@ class ConvShared(nn.Module):
         player_vectors = rearrange(
             encoded_players, '(b p) v -> b (p v)',
             b=batch_size)
+        if self.action_input:
+            cur_tiles = torch.concatenate((cur_tiles,state['Actions']), dim=1)
         encoded_cur_tiles = self.cur_tiles_encoder(cur_tiles)
+        
         mix_input = torch.concatenate((player_vectors,encoded_cur_tiles), dim=1)
         output = self.final_fc(mix_input)
         return output

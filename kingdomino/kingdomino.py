@@ -10,7 +10,7 @@ from kingdomino.board import Boards
 from printer import Printer
 from graphics import draw_obs
 from utils import switch, arr_except, cartesian_product
-
+from utils import arr2tuple
 
 class TileDeck:      
     def __init__(self):
@@ -172,7 +172,9 @@ class Kingdomino:
         
 
     def step(self, action):
+        print('OUI', action)
         tile_id, position = action
+        position = np.array(position)
         # Select tile
         if not self.last_turn:
             self._pickTile(tile_id)
@@ -206,11 +208,11 @@ class Kingdomino:
     # Because some method might want to handle positions and then tile selection for instance
     def getPossibleTilesPositions(self):
         if self.last_turn:
-            tiles_possible = np.array([-1])
+            tiles_possible = (-1,)
         else:
-            tiles_possible = np.where(self.current_tiles[:,-1] == -1)[0]
+            tiles_possible = arr2tuple(np.where(self.current_tiles[:,-1] == -1)[0])
         if self.first_turn:
-            positions_possible = np.array([Kingdomino.discard_tile])
+            positions_possible = arr2tuple([Kingdomino.discard_tile])
         else:
             # print('Previous tiles of current player:', self.players_previous_tile[self.current_player_id])
             # print('Player id:', self.current_player_id)
@@ -282,7 +284,7 @@ def getPossiblePositions(tile, boards, every_pos, player_id):
                         if (_i != i and _j != j) or (_i==i and _j==j) or boards.getBoard(player_id, _i, _j) != -1:
                             continue
                         try:
-                            pos = np.array([[i,j],[_i,_j]])
+                            pos = ((i,j),(_i,_j))
                             checkPlacementValid(
                                 p_id=player_id, 
                                 position=pos, 
@@ -294,8 +296,8 @@ def getPossiblePositions(tile, boards, every_pos, player_id):
                         except GameException:
                             pass
     if len(available_pos) == 0:
-        return [Kingdomino.discard_tile]
-    return np.array(available_pos)
+        return [arr2tuple(Kingdomino.discard_tile)]
+    return available_pos
 
 def isTilePlaceable(tile, board):
     return getPossiblePositions(tile, board, every_pos=False)

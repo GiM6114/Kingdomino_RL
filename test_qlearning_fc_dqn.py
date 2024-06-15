@@ -9,7 +9,6 @@ from tqdm.auto import tqdm
 from epsilon_scheduler import EpsilonDecayRestart
 import kingdomino.kingdomino
 import kingdomino.rewards
-from kingdomino.utils import get_n_actions
 import agents.dqn
 from printer import Printer
 import run
@@ -18,7 +17,6 @@ from models_directory_utils import read_experiment, write_experiment, load_playe
 from prioritized_experience_replay import ReplayBuffer, PrioritizedReplayBuffer
 from agents.encoding import ActionInterface, BOARD_CHANNELS, TILE_ENCODING_SIZE, CUR_TILES_ENCODING_SIZE
 from log import Logger
-
 from config import experiment, network_types, reward_fns, opponents
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -36,8 +34,6 @@ print(f'Device used: {device}')
 #           event
 #       250324_1154...
 #   DQN_Conv...
-
-
 if __name__ == '__main__':
     initial_log_dir = None
     file_name = None

@@ -2,6 +2,7 @@ import numpy as np
 import random
 from abc import ABC, abstractmethod
 import torch
+from itertools import product
 
 from agents.encoding import state_encoding
 from prioritized_experience_replay import PrioritizedReplayBuffer
@@ -30,11 +31,15 @@ class HumanPlayer(Player):
 
 
 class RandomPlayer(Player):
-    def action(self, state, kingdomino):
-        return random.choice(kingdomino.getPossibleActions())
+    def action(self, state, p_a):
+        print('random')
+        return random.choice(list(product(*p_a)))
 
 
 class LearningAgent(Player, ABC):
+    def __init__(self, encode_state=True):
+        self.encode_state = encode_state
+    
     def reset(self):
         self.prev_s = None
         self.prev_a = None
@@ -47,7 +52,8 @@ class LearningAgent(Player, ABC):
         # Check if last state of the episode
         if next_s is None:
             next_s = self.prev_s
-            p_a = [-1],[[[-1,-1],[-1,-1]]]
+            p_a = ((-1,((-1,-1),(-1,-1))),)
+            print('fehozpfhzp')
             
         s = self.prev_s
         a = self.prev_a
@@ -63,15 +69,19 @@ class LearningAgent(Player, ABC):
             next_s['Current tiles'].squeeze(),
             next_s['Previous tiles'].squeeze(),
             d,
-            self.action_interface.encode(np.array(p_a[0]),np.array(p_a[1]))))
+            self.action_interface.encode(p_a)))
     
     # state : dict['Boards','Previous tiles','Current tiles']
     # state_encoding : same but one_hot_encoded
     @torch.no_grad()
-    def action(self, s, kingdomino):
-        p_a = kingdomino.getPossibleTilesPositions()
-        encoded_s = state_encoding(s, self.n_players, self.device)
-        self.policy.filter_encoded_state(encoded_s)        
+    def action(self, s, p_a):
+        encoded_s = s
+        if self.encode_state:
+            encoded_s = state_encoding(s, self.n_players, self.device)
+        s = self.policy.filter_encoded_state(encoded_s)
+        print(p_a)
+        p_a = self.action_interface.expand_possible_actions(p_a)
+        print(p_a)
         if self.training:
             self.add_to_memory(encoded_s, p_a)
             self.prev_s = encoded_s

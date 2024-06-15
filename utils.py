@@ -16,3 +16,9 @@ def cartesian_product(*arrays):
     for i, a in enumerate(np.ix_(*arrays)):
         arr[...,i] = a
     return arr.reshape(-1, la)
+
+def arr2tuple(a):
+    try:
+        return tuple(arr2tuple(i) for i in a)
+    except TypeError:
+        return a

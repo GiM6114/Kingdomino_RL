@@ -21,7 +21,7 @@ def test(env, players, n_episodes, verbose=-1):
                     if verbose == 2:
                         print(f"Player {player_id}'turn")
                         display(draw_obs(state))
-                    action = players[player_id].action(state, env)
+                    action = players[player_id].action(state, env.getPossibleTilesPositions())
                     if verbose == 2:
                         print(action)
                     state,reward,done,info = env.step(action)
@@ -49,7 +49,7 @@ def train(env, players, n_episodes):
                     r = env.getReward(p_id)
                     players[p_id].process_reward(r, False)
                     sum_rewards[p_id] += r
-                a = players[p_id].action(s, env)
+                a = players[p_id].action(s, env.getPossibleTilesPositions())
                 s,d,info = env.step(a)
             if d:
                 for i,player in enumerate(players):
@@ -76,7 +76,7 @@ def test_random(env, player, n_episodes, verbose=False):
                         print(f"Player {p_id}'s turn")
                         print('State:')
                         display(draw_obs(s))
-                    a = players[p_id].action(s, env)
+                    a = players[p_id].action(s, env.getPossibleTilesPositions())
                     s,d,info = env.step(a)
                     if verbose:
                         print('Action:', a)
@@ -100,7 +100,7 @@ def human_test(env, player):
     while not done:
         for player_id in env.order:
             display(draw_obs(state))
-            action = players[player_id].action(state, env)
+            action = players[player_id].action(state, env.getPossibleTilesPositions())
             state,reward,done,info = env.step(action)
             if done:
                 break
