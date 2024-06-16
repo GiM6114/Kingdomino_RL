@@ -172,7 +172,6 @@ class Kingdomino:
         
 
     def step(self, action):
-        print('OUI', action)
         tile_id, position = action
         position = np.array(position)
         # Select tile
@@ -212,7 +211,7 @@ class Kingdomino:
         else:
             tiles_possible = arr2tuple(np.where(self.current_tiles[:,-1] == -1)[0])
         if self.first_turn:
-            positions_possible = arr2tuple([Kingdomino.discard_tile])
+            positions_possible = (arr2tuple(Kingdomino.discard_tile),)
         else:
             # print('Previous tiles of current player:', self.players_previous_tile[self.current_player_id])
             # print('Player id:', self.current_player_id)

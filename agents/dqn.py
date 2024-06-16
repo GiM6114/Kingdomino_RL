@@ -1,7 +1,9 @@
 import random
 import torch.nn as nn
+import torch.nn.functional as F
 import torch
 from abc import ABC, abstractmethod
+import os
 
 from networks import PlayerFocusedFC, PlayerFocusedACNN
 from prioritized_experience_replay import PrioritizedReplayBuffer
@@ -15,34 +17,33 @@ from agents.encoding import ActionInterface, BOARD_CHANNELS, TILE_ENCODING_SIZE,
 from kingdomino.utils import compute_n_positions
 
 class SequentialDQN_AgentInterface:
-    def __init__(self, **kwargs):
+    def __init__(self, log_dir, **kwargs):
+        self.device = kwargs['device']
         self.tile_selector = DQN_Agent(
-            n_actions=kwargs['n_players'],
-            action_interface=TileInterface(kwargs['n_players']),
+            log_dir=log_dir,
+            log_file='tile_selector_checkpt.pt',
+            action_interface=TileInterface(n_players=kwargs['n_players']),
             **kwargs)
         self.coordinate_selector = DQN_Agent(
-            n_actions=compute_n_positions(kwargs['board_size'])+1,
+            log_dir=log_dir,
+            log_file='coordinate_selector_checkpt.pt',
             action_interface=CoordinateInterface(kwargs['board_size']),
-            action_input=kwargs['n_players'],
+            action_input=kwargs['n_players']+1,
             encode_state=False,
             **kwargs)
     
     @torch.no_grad()
     def action(self, s, p_a):
-        print('Sequential action p_a',p_a)
         t,p = p_a
-        print(t)
         selected_tile = self.tile_selector.action(s, t)
-        print('Sequential action', selected_tile)
         # augment state with previous action
-        s['Actions'] = selected_tile
+        s['Actions'] = F.one_hot(torch.tensor([selected_tile+1]), self.tile_selector.n_actions).to(self.device)
         selected_coordinate = self.coordinate_selector.action(s, p)
         return selected_tile,selected_coordinate
     
     def process_reward(self, r, d):
         self.tile_selector.process_reward(r, d)
         self.coordinate_selector.process_reward(r, d)
-    
     
     def reset(self):
         self.tile_selector.reset()
@@ -52,9 +53,17 @@ class SequentialDQN_AgentInterface:
         self.tile_selector.train()
         self.coordinate_selector.train()
         
-    def test(self):
-        self.tile_selector.test()
-        self.coordinate_selector.test()
+    def eval(self):
+        self.tile_selector.eval()
+        self.coordinate_selector.eval()
+        
+    def load(self, path):
+        self.tile_selector.load(path)
+        self.coordinate_selector.save(path)
+    
+    def save(self, log_dir=None, log_name=None, other={}):
+        self.tile_selector.save(log_dir, log_name, other)
+        self.coordinate_selector.save(log_dir, log_name, other)
         
     
     
@@ -64,7 +73,8 @@ class DQN_Agent(LearningAgent):
                  board_size,
                  id,
                  Network,
-                 n_actions,
+                 log_dir,
+                 log_file='checkpt.pt',
                  eps_scheduler=None,
                  action_interface=None,
                  exploration_batch_size=1,
@@ -75,7 +85,7 @@ class DQN_Agent(LearningAgent):
                  target=None,
                  action_input=0,
                  encode_state=True):
-        super().__init__(encode_state)
+        super().__init__(log_dir, log_file, encode_state)
         # should be 1 if env on cpu
         self.exploration_batch_size = exploration_batch_size
         self.batch_size = hp['batch_size']
@@ -99,7 +109,8 @@ class DQN_Agent(LearningAgent):
         self.board_size = board_size
         self.id = id
         self.gamma = hp['gamma']
-        self.n_actions = n_actions
+        self.action_interface = action_interface
+        self.n_actions = self.action_interface.n_actions
         
         # MEMORY
         Memory = PrioritizedReplayBuffer if hp['PER'] else ReplayBuffer
@@ -107,13 +118,14 @@ class DQN_Agent(LearningAgent):
             boards_state_size=(n_players,BOARD_CHANNELS,board_size,board_size),
             cur_tiles_state_size=(CUR_TILES_ENCODING_SIZE)*n_players,
             prev_tiles_state_size=(n_players, TILE_ENCODING_SIZE),
+            action_state_size=(action_input,) if action_input != 0 else None,
             action_size=self.n_actions,
             buffer_size=hp['replay_memory_size'],
             fixed_possible_actions_size=self.n_actions,
             device=device)    
         self.memory = memory
         
-        self.action_interface = action_interface
+
         self.network_hp = network_hp
         self.Network = Network
         self.double = hp['double']
@@ -157,10 +169,29 @@ class DQN_Agent(LearningAgent):
             torch_action = torch.zeros(possible_a_mask.shape[0], dtype=bool)
             torch_action[idx] = 1
             return env_action,torch_action # actual action,action to register in buffer
-        print(p_a)
         a_idx = random.randint(0, len(p_a)-1)
-        print('TESTSTSTST')
         return (p_a[a_idx],self.action_interface.encode((p_a[a_idx],)))
+
+    def load(self, path):
+        checkpt = torch.load(path)
+        self.policy.load_state_dict(checkpt['policy'])
+        self.target.load_state_dict(checkpt['target'])
+        self.optimizer.load_state_dict(checkpt['optimizer'])
+        self.memory = checkpt['memory']
+        self.eps_scheduler = checkpt['eps_scheduler']
+        
+    def save(self, log_dir=None, log_file=None, other={}):
+        if log_dir is None:
+            log_dir = self.log_dir
+        if log_file is None:
+            log_file = self.log_file
+        torch.save({'policy':self.policy.state_dict(),
+                    'target':self.target.state_dict(),
+                    'optimizer':self.optimizer.state_dict(),
+                    'memory':self.memory,
+                    'eps_scheduler':self.eps_scheduler,
+                    **other},
+                     os.path.join(log_dir, log_file))
 
     # def select_action(self, s, p_a):
     #     t,p = p_a # list of possible tiles, possible positions
@@ -212,8 +243,10 @@ class DQN_Agent(LearningAgent):
             batch = self.memory.sample(self.batch_size)
         
         boards_s,cur_tiles_s,prev_tiles_s, \
+        action_s, \
         a, r, \
         boards_next_s, cur_tiles_next_s, prev_tiles_next_s, \
+        action_next_s, \
         d, possible_a = batch
         
         # Transfer on accelerator
@@ -229,13 +262,15 @@ class DQN_Agent(LearningAgent):
         q = self.policy(
             {'Boards':boards_s, 
              'Current tiles':cur_tiles_s, 
-             'Previous tiles': prev_tiles_s}).squeeze()
+             'Previous tiles': prev_tiles_s,
+             'Actions':action_s}).squeeze()
         q = q[a.nonzero(as_tuple=True)]
         
         next_s = {
             'Boards':boards_next_s, 
             'Current tiles':cur_tiles_next_s, 
-            'Previous tiles':prev_tiles_next_s}
+            'Previous tiles':prev_tiles_next_s,
+            'Actions':action_next_s}
         with torch.no_grad():
             q_target = self.get_q_target(next_s, r, d, possible_a)
         

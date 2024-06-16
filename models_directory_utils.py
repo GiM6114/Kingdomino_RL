@@ -46,12 +46,19 @@ def find_highest_numbered_directory(directory):
 
 
 
-def load_player(n_players, board_size, device, hp, log_dir=None, file_name=None, player_2=False):
+def load_player(
+        n_players, 
+        board_size,
+        device, 
+        hp, 
+        continue_training,
+        log_dir=None, 
+        file_name=None, 
+        player_2=False):
     
     n_episodes = 0
     best_avg_reward = -np.inf   
     
-    continue_training = log_dir is not None
     n_actions = compute_n_actions(board_size, n_players)
     
     # NETWORK
@@ -64,6 +71,7 @@ def load_player(n_players, board_size, device, hp, log_dir=None, file_name=None,
             n_players=n_players)
         
         player_1 = agents.dqn.DQN_Agent(
+            log_dir=log_dir,
             n_players=n_players,
             board_size=experiment['board_size'],
             Network=Network,
@@ -74,6 +82,7 @@ def load_player(n_players, board_size, device, hp, log_dir=None, file_name=None,
             id=0)
     elif hp['action_type'] == 'sequential':
         player_1 = agents.dqn.SequentialDQN_AgentInterface(
+            log_dir=log_dir,
             n_players=n_players,
             board_size=experiment['board_size'],
             Network=Network,
@@ -83,16 +92,11 @@ def load_player(n_players, board_size, device, hp, log_dir=None, file_name=None,
         
     if continue_training:
         print(f'Loading models, memory and optimizers from {log_dir}')
-        checkpt = torch.load(os.path.join(log_dir, file_name))
-        player_1.policy.load_state_dict(checkpt['policy'])
-        player_1.target.load_state_dict(checkpt['target'])
-        player_1.optimizer.load_state_dict(checkpt['optimizer'])
+        path = os.path.join(log_dir, file_name)
+        player_1.load(path)
+        checkpt = torch.load(path)
         n_episodes = checkpt['n_episodes']
         best_avg_reward = checkpt['best_avg_reward']
-        memory = checkpt['memory']
-        eps_scheduler = checkpt['eps_scheduler']
-        player_1.memory = memory
-        player_1.eps_scheduler = eps_scheduler
     
     if player_2:
         if hp['opponent_type'] == 'self':
@@ -114,7 +118,7 @@ def load_player(n_players, board_size, device, hp, log_dir=None, file_name=None,
                     n_players=n_players,
                     board_size=experiment['board_size'],
                     Network=Network,
-                    eps_scheduler=eps_scheduler,
+                    eps_scheduler=player_1.eps_scheduler,
                     device=device,
                     policy=player_1.policy,
                     target=player_1.target,

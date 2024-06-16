@@ -12,6 +12,7 @@ class PrioritizedReplayBuffer:
                  prev_tiles_state_size,
                  action_size,
                  buffer_size,
+                 action_state_size=None,
                  fixed_possible_actions_size=False,
                  eps=1e-2, alpha=0.1, beta=0.1, device='cpu'):
         self.device = device
@@ -29,6 +30,11 @@ class PrioritizedReplayBuffer:
         self.cur_tiles_state = torch.empty(buffer_size, cur_tiles_state_size, dtype=torch.int, device=self.device)
         self.prev_tiles_state = torch.empty(buffer_size, *prev_tiles_state_size, dtype=torch.int, device=self.device)
         
+        self.action_input = action_state_size is not None
+        if self.action_input:
+            self.action_state = torch.empty(buffer_size, *action_state_size, dtype=torch.int, device=self.device)
+            self.action_next_state = torch.empty(buffer_size, *action_state_size, dtype=torch.int, device=self.device)
+
         self.action = torch.empty(buffer_size, action_size, dtype=torch.int, device=self.device)
         self.reward = torch.empty(buffer_size, dtype=torch.float, device=self.device)
         
@@ -52,8 +58,10 @@ class PrioritizedReplayBuffer:
 
     def add(self, transition):
         boards_state, cur_tiles_state, prev_tiles_state, \
+            action_state, \
             action, reward, \
             boards_next_state, cur_tiles_next_state, prev_tiles_next_state, \
+            action_next_state, \
             done, possible_actions = transition
 
         # store transition index with maximum priority in sum tree
@@ -63,6 +71,10 @@ class PrioritizedReplayBuffer:
         self.boards_state[self.count] = torch.as_tensor(boards_state, device=self.device)
         self.cur_tiles_state[self.count] = torch.as_tensor(cur_tiles_state, device=self.device)
         self.prev_tiles_state[self.count] = torch.as_tensor(prev_tiles_state, device=self.device)
+
+        if self.action_input:
+            self.action_state[self.count] = torch.as_tensor(action_state, device=self.device)
+            self.action_next_state[self.count] = torch.as_tensor(action_next_state, device=self.device)
 
         self.action[self.count] = torch.as_tensor(action, device=self.device)
         self.reward[self.count] = torch.as_tensor(reward, device=self.device)
@@ -127,32 +139,27 @@ class PrioritizedReplayBuffer:
         # within a reasonable range, avoiding the possibility of extremely large updates. (Appendix B.2.1, Proportional prioritization)
         weights = weights / weights.max()
 
-        if self.fixed_possible_actions_size:
-            batch = (
-                self.boards_state[sample_idxs].to(self.device),
-                self.cur_tiles_state[sample_idxs].to(self.device),
-                self.prev_tiles_state[sample_idxs].to(self.device),
-                self.action[sample_idxs].to(self.device),
-                self.reward[sample_idxs].to(self.device),
-                self.boards_next_state[sample_idxs].to(self.device),
-                self.cur_tiles_next_state[sample_idxs].to(self.device),
-                self.prev_tiles_next_state[sample_idxs].to(self.device),
-                self.done[sample_idxs].to(self.device),
-                self.possible_actions[sample_idxs].to(self.device)
-            )
+        
+        batch = [                
+            self.boards_state[sample_idxs].to(self.device),
+            self.cur_tiles_state[sample_idxs].to(self.device),
+            self.prev_tiles_state[sample_idxs].to(self.device),
+            self.action[sample_idxs].to(self.device),
+            self.reward[sample_idxs].to(self.device),
+            self.boards_next_state[sample_idxs].to(self.device),
+            self.cur_tiles_next_state[sample_idxs].to(self.device),
+            self.prev_tiles_next_state[sample_idxs].to(self.device),
+            self.done[sample_idxs].to(self.device)]
+        if self.action_input:
+            batch.insert(3, self.action_state[sample_idxs].to(self.device))
+            batch.insert(9, self.action_next_state[sample_idxs].to(self.device))
         else:
-            batch = (
-                self.boards_state[sample_idxs].to(self.device),
-                self.cur_tiles_state[sample_idxs].to(self.device),
-                self.prev_tiles_state[sample_idxs].to(self.device),
-                self.action[sample_idxs].to(self.device),
-                self.reward[sample_idxs].to(self.device),
-                self.boards_next_state[sample_idxs].to(self.device),
-                self.cur_tiles_next_state[sample_idxs].to(self.device),
-                self.prev_tiles_next_state[sample_idxs].to(self.device),
-                self.done[sample_idxs].to(self.device),
-                [self.possible_actions[i] for i in sample_idxs]
-            )
+            batch.insert(3, None)
+            batch.insert(9, None)
+        if self.fixed_possible_actions_size:
+            batch.append(self.possible_actions[sample_idxs].to(self.device))
+        else:
+            batch.append([self.possible_actions[i] for i in sample_idxs])
         return batch, weights, tree_idxs
 
     def update_priorities(self, data_idxs, priorities):
@@ -177,6 +184,7 @@ class ReplayBuffer:
                  action_size,
                  buffer_size,
                  fixed_possible_actions_size,
+                 action_state_size=None,
                  device='cpu'):
         self.device = device
         # transition: state, action, reward, next_state, done
@@ -185,6 +193,10 @@ class ReplayBuffer:
         self.cur_tiles_state = torch.empty(buffer_size, cur_tiles_state_size, dtype=torch.int, device=self.device)
         self.prev_tiles_state = torch.empty(buffer_size, *prev_tiles_state_size, dtype=torch.int, device=self.device)
         
+        self.action_input = action_state_size is not None
+        if self.action_input:
+            self.action_state = torch.empty(buffer_size, *action_state_size, dtype=torch.int, device=self.device)
+                
         self.action = torch.empty(buffer_size, action_size, dtype=torch.int, device=self.device)
         self.reward = torch.empty(buffer_size, dtype=torch.float, device=self.device)
         
@@ -206,6 +218,7 @@ class ReplayBuffer:
 
     def add(self, transition):
         boards_state, cur_tiles_state, prev_tiles_state, \
+        action_state, \
         action, reward, \
         boards_next_state, cur_tiles_next_state, prev_tiles_next_state, \
         done, possible_actions = transition
@@ -221,6 +234,10 @@ class ReplayBuffer:
         self.boards_next_state[self.count] = torch.as_tensor(boards_next_state)
         self.cur_tiles_next_state[self.count] = torch.as_tensor(cur_tiles_next_state)
         self.prev_tiles_next_state[self.count] = torch.as_tensor(prev_tiles_next_state)
+        
+        if self.action_input:
+            self.action_state[self.count] = torch.as_tensor(action_state, device=self.device)
+
         
         self.done[self.count] = torch.as_tensor(done)
         
@@ -241,32 +258,23 @@ class ReplayBuffer:
 
         sample_idxs = np.random.choice(self.real_size, batch_size, replace=False)
 
+        batch = [
+            self.boards_state[sample_idxs].to(self.device),
+            self.cur_tiles_state[sample_idxs].to(self.device),
+            self.prev_tiles_state[sample_idxs].to(self.device),
+            self.action[sample_idxs].to(self.device),
+            self.reward[sample_idxs].to(self.device),
+            self.boards_next_state[sample_idxs].to(self.device),
+            self.cur_tiles_next_state[sample_idxs].to(self.device),
+            self.prev_tiles_next_state[sample_idxs].to(self.device),
+            self.done[sample_idxs].to(self.device)
+            ]
+        if self.action_input:
+            batch.insert(3, self.action_state[sample_idxs].to(self.device))
         if self.fixed_possible_actions_size:
-            batch = (
-                self.boards_state[sample_idxs].to(self.device),
-                self.cur_tiles_state[sample_idxs].to(self.device),
-                self.prev_tiles_state[sample_idxs].to(self.device),
-                self.action[sample_idxs].to(self.device),
-                self.reward[sample_idxs].to(self.device),
-                self.boards_next_state[sample_idxs].to(self.device),
-                self.cur_tiles_next_state[sample_idxs].to(self.device),
-                self.prev_tiles_next_state[sample_idxs].to(self.device),
-                self.done[sample_idxs].to(self.device),
-                self.possible_actions[sample_idxs].to(self.device)
-            )
+            batch.append(self.possible_actions[sample_idxs].to(self.device))
         else:
-            batch = (
-                self.boards_state[sample_idxs].to(self.device),
-                self.cur_tiles_state[sample_idxs].to(self.device),
-                self.prev_tiles_state[sample_idxs].to(self.device),
-                self.action[sample_idxs].to(self.device),
-                self.reward[sample_idxs].to(self.device),
-                self.boards_next_state[sample_idxs].to(self.device),
-                self.cur_tiles_next_state[sample_idxs].to(self.device),
-                self.prev_tiles_next_state[sample_idxs].to(self.device),
-                self.done[sample_idxs].to(self.device),
-                [self.possible_actions[i] for i in sample_idxs]
-            )
+            batch.append([self.possible_actions[i] for i in sample_idxs])
         return batch
     
     def __len__(self):

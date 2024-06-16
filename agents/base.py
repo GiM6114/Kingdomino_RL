@@ -32,12 +32,13 @@ class HumanPlayer(Player):
 
 class RandomPlayer(Player):
     def action(self, state, p_a):
-        print('random')
         return random.choice(list(product(*p_a)))
 
 
 class LearningAgent(Player, ABC):
-    def __init__(self, encode_state=True):
+    def __init__(self, log_dir, log_file, encode_state=True):
+        self.log_dir = log_dir
+        self.log_file = log_file
         self.encode_state = encode_state
     
     def reset(self):
@@ -52,8 +53,7 @@ class LearningAgent(Player, ABC):
         # Check if last state of the episode
         if next_s is None:
             next_s = self.prev_s
-            p_a = ((-1,((-1,-1),(-1,-1))),)
-            print('fehozpfhzp')
+            p_a = (self.action_interface.default_action,)
             
         s = self.prev_s
         a = self.prev_a
@@ -63,11 +63,13 @@ class LearningAgent(Player, ABC):
             s['Boards'].squeeze(),
             s['Current tiles'].squeeze(),
             s['Previous tiles'].squeeze(),
+            s.get('Actions', None),
             a,
             r,
             next_s['Boards'].squeeze(),
             next_s['Current tiles'].squeeze(),
             next_s['Previous tiles'].squeeze(),
+            next_s.get('Actions', None),
             d,
             self.action_interface.encode(p_a)))
     
@@ -79,9 +81,7 @@ class LearningAgent(Player, ABC):
         if self.encode_state:
             encoded_s = state_encoding(s, self.n_players, self.device)
         s = self.policy.filter_encoded_state(encoded_s)
-        print(p_a)
         p_a = self.action_interface.expand_possible_actions(p_a)
-        print(p_a)
         if self.training:
             self.add_to_memory(encoded_s, p_a)
             self.prev_s = encoded_s
@@ -101,8 +101,13 @@ class LearningAgent(Player, ABC):
     @abstractmethod
     def optimize(self):
         pass
-
-         
+    @abstractmethod     
+    def load(self, path):
+        pass
+    @abstractmethod
+    def save(self, log_dir=None, log_name=None):
+        pass
+    
     def process_reward(self, r, d):
         self.prev_r = r
         self.prev_d = d

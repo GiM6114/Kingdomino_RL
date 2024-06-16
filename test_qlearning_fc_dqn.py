@@ -54,13 +54,14 @@ if __name__ == '__main__':
     logger = Logger(log_dir)
     
     player_1,player_2,n_episodes,best_avg_reward = load_player(
-        n_players,
-        board_size,
-        device,
-        hp,
-        initial_log_dir,
-        file_name,
-        player_2=True)
+        n_players=n_players,
+        board_size=board_size,
+        device=device,
+        hp=hp,
+        log_dir=log_dir,
+        file_name=file_name,
+        player_2=True,
+        continue_training=continue_training)
 
     players = [player_1, player_2]
     env = kingdomino.kingdomino.Kingdomino(
@@ -78,6 +79,7 @@ if __name__ == '__main__':
         logger.log(f'Iteration {i}')
         train_rewards = run.train(env, players, n_train_episodes)
         n_episodes += n_train_episodes
+        print('Testing')
         test_scores = run.test_random(env, player_1, n_test_episodes)    
         
         # Logging
@@ -94,30 +96,18 @@ if __name__ == '__main__':
         
         # Recording info of current model
         print(f'Saving checkpt at path {log_dir}...')
-        torch.save({
-            'policy':player_1.policy.state_dict(), 
-            'target':player_1.target.state_dict(),
-            'optimizer':player_1.optimizer.state_dict(),
-            'n_episodes':n_episodes,
-            'best_avg_reward':best_avg_reward,
-            'memory':player_1.memory,
-            'eps_scheduler':player_1.eps_scheduler},
-            os.path.join(log_dir, 'checkpt.pt'))
+        player_1.save(
+            other={'n_episodes':n_episodes, 
+                   'best_avg_reward':best_avg_reward})
         print('Checkpt saved !')
 
         # Special recording if best model so far
         if score_test_player_1 > best_avg_reward:
             print(f'Saving best checkpt at path {log_dir}...')
             best_avg_reward = score_test_player_1
-            torch.save({
-                'policy':player_1.policy.state_dict(), 
-                'target':player_1.target.state_dict(),
-                'optimizer':player_1.optimizer.state_dict(),
-                'n_episodes':n_episodes,
-                'best_avg_reward':best_avg_reward,
-                'memory':player_1.memory,
-                'eps_scheduler':player_1.eps_scheduler},
-                os.path.join(log_dir, 'best_checkpt.pt'))
+            player_1.save(log_name='best_checkpt.pt',
+                          other={'n_episodes':n_episodes, 
+                                 'best_avg_reward':best_avg_reward})
             print('Best checkpt saved !')
         
         # with torch.no_grad():

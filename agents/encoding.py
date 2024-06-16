@@ -16,13 +16,11 @@ BOARD_CHANNELS = N_TILE_TYPES+2
 
 class ActionInterface:
     def encode(self, action):
-        print('Action',action)
         if len(action) == 1:
             actions_id = self.action2id[action[0]]
         else:
             actions_id = list(itemgetter(*action)(self.action2id))
         actions = np.zeros(self.n_actions, dtype=bool)
-        print(actions_id)
         actions[actions_id] = 1
         return actions
     
@@ -43,6 +41,7 @@ class CoordinateInterface(ActionInterface):
     def __init__(self, board_size):
         self.board_size = board_size
         self.n_actions = compute_n_positions(board_size) + 1
+        self.default_action = (-1,-1),(-1,-1)
         self.action2id,self.id2action = CoordinateInterface.coordinate2id2coordinate(board_size)
     
     def coordinate2id2coordinate(board_size):
@@ -71,29 +70,29 @@ class CoordinateInterface(ActionInterface):
 class TileInterface(ActionInterface):
     def __init__(self, n_players):
         self.n_players = n_players
-        self.n_actions = self.n_players
+        self.n_actions = self.n_players+1
+        self.default_action = -1
         self.action2id,self.id2action = TileInterface.tile2id2tile(n_players)
 
     def tile2id2tile(n_players):
-        id2action = [(i,) for i in range(-1,n_players)]
-        action2id = {(i-1,):i for i in range(n_players)}
-        return id2action,action2id        
+        id2action = [i for i in range(-1,n_players)]
+        action2id = {i-1:i for i in range(n_players+1)}
+        return action2id,id2action        
 
 class TileCoordinateInterface(ActionInterface):
     def __init__(self, n_players, board_size):
         self.n_players = n_players
         self.board_size = board_size
+        self.default_action = -1,((-1,-1),(-1,-1))
         self.n_actions = (n_players+1)*(compute_n_positions(board_size)+1)
         self.action2id,self.id2action = TileCoordinateInterface.action2id2action(n_players, board_size)
     
     def expand_possible_actions(self, p_a):
-        print(p_a)
         return list(product(*p_a))
     
     # tiles: np array of possible tiles (ex: 0,2)
     # positions: np array of possible positions
     def encode(self, action):
-        print('Action to encode', action)
         if len(action) == 1:
             actions_id = self.action2id[(action[0][0], action[0][1])]
         else:
@@ -164,7 +163,7 @@ def tiles_encoding(tiles, n_players, device='cpu'):
 # boards : (batch_size, n_players, 2, 9, 9)
 # Returns : (batch_size, n_players, N_TILE_TYPES+2, 9, 9)
 def boards_encoding(boards, n_players, device='cpu'):
-    boards = torch.as_tensor(boards, device=device)
+    boards = torch.as_tensor(boards, device=device, dtype=torch.int64)
     batch_size = boards.shape[0]
     board_size = boards.shape[-1]
     # (N_TILE_TYPES) + 3 : crown + empty tiles + center
