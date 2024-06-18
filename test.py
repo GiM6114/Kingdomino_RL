@@ -5,6 +5,10 @@ from agent import HumanPlayer, RandomPlayer
 from printer import Printer
 from kingdomino import Kingdomino
 
+#%%
+
+
+#%%
 
 agent = RandomPlayer()
 kingdomino = gym.make('KingDomino-v0', n_players=2)

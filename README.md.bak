@@ -12,15 +12,7 @@ Here is a couple reasons why Kingdomino is an interesting and challenging game:
 - Multimodal data: 2D data (boards) as well as tabular data (tiles)
 - Multiplayer (although the interaction between players is limited)
 - Large state and action space
-- Two actions per turn for a player (placing the previous tile on the board and selecting a tile from the current tiles)
-
-### Current state of the project
-
-- Kingdomino is implemented
-- MPC agent implemented
-- Naive DQN agent which takes the state as a vector (no exploiting of regularities) and outputs one of the very numerous actions (where an action is choosing a tile + selecting where to place previous tile)
-- Presumably better DQN agent processing the boards along with the previous tile of each player to obtain a vector v, then processing current tiles along with v to finally output an action
-- Presumably better action strategy where two DQN agents are used sequentially; one for choosing the tile to pick and one for placing the tile (this reduces the action space for each agent)
+- Two actions to be done per turn for a player
 
 ### Ideas
 

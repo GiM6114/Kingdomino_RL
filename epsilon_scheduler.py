@@ -41,7 +41,7 @@ if __name__ == "__main__":
     import numpy as np
     import matplotlib.pyplot as plt
     
-    e = EpsilonDecayRestart(0.9,0.01,1000,0.5,0.0175)
+    e = EpsilonDecayRestart(0.9,0.01,2000,0.3,0.02)
     a = np.zeros(50000)
     for i in range(a.shape[0]):
         a[i] = e.eps()

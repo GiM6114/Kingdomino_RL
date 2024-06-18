@@ -35,13 +35,14 @@ print(f'Device used: {device}')
 #       250324_1154...
 #   DQN_Conv...
 if __name__ == '__main__':
-    initial_log_dir = None
+    initial_log_dir = None # 'C:/Users/hugom/OneDrive/Documents/ProjetProg/KingdominoAgent/Kingdomino_RL/runs/DQN_FC/160624_184121'
     file_name = None
     continue_training = initial_log_dir is not None
     if continue_training:
-        experiment = read_experiment(initial_log_dir)
-        n_episodes = experiment['n_episodes']
-        best_avg_reward = experiment['best_avg_reward']
+        experiment = read_experiment(os.path.join(initial_log_dir, 'experiment.txt'))
+        # n_episodes = experiment['n_episodes']
+        # best_avg_reward = experiment['best_avg_reward']
+        log_dir = initial_log_dir
     else:
         log_dir = os.path.join('runs', 'DQN_FC', datetime.now().strftime('%d%m%y_%H%M%S'))
         os.makedirs(log_dir)

@@ -18,15 +18,15 @@ network_hp = {
                 {'type':'maxpool','params':{'kernel_size':2, 'stride':1, 'padding':1}},
                 ],
             'fc':{
-                'output_size':128,
+                'output_size':64,
                 'l':3,
-                'n':128}},
+                'n':64}},
       'prev_tile_encoder':{
           'output_size':64,
-          'l':2,
+          'l':3,
           'n':64},
       'joint_encoder':{
-          'output_size':256,
+          'output_size':128,
           'l':3,
           'n':128}},
   'cur_tiles_encoder':{
@@ -40,7 +40,7 @@ network_hp = {
 
 hp = {'batch_size':256,
       'tau':0.005,
-      'gamma':0.99,
+      'gamma':0.999,
       'lr':3e-4,
       'replay_memory_size':50000,
       'double':True,
@@ -50,9 +50,9 @@ hp = {'batch_size':256,
       # Exploration
       'eps_start':0.9,
       'eps_end':0.01,
-      'eps_decay':1000,
-      'eps_restart_threshold':0.0175,
-      'eps_restart':0.5,
+      'eps_decay':2000,
+      'eps_restart_threshold':0.02,
+      'eps_restart':0.1,
       # Architecture
       'network_type':1,
       'network_hp':network_hp,
