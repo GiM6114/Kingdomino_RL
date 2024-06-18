@@ -5,6 +5,8 @@ A video explaining the rules of the game can be found here: https://www.youtube.
 Some of the questions I wish to answer is whether it is a better strategy to mess with the plans of other players rather than maximizing one's own score, whether player should focus more often on picking small scores tiles as a way to play first more often, etc.
 Previous work on Kingdomino playing agents using Monte-Carlo methods, done by Gedda M. et al: https://arxiv.org/abs/1807.04458.
 
+I try to not use pre-existing libraries like stable-baselines3 as I think it is interesting to implement everything myself as a learning procedure. However, I used the following implementation of Prioritized Experience Replay: https://github.com/Howuhh/prioritized_experience_replay
+
 ### Reasons for Kingdomino
 
 Here is a couple reasons why Kingdomino is an interesting and challenging game:

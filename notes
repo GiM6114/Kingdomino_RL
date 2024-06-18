@@ -1,4 +1,0 @@
-- Convolutions on the board cannot possibly give good information for the action...
-- ...because info of WHERE precisely in the image is lost
-* No because in the end we have an image with coordinates
-- ...but network has to output an opinion on specific coordinates
