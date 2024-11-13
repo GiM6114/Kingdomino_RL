@@ -47,3 +47,6 @@ def player_focused_reward(kd, p_id):
         return 0
     reward = scores[p_id] - kd.prev_scores[p_id]
     return reward
+
+def reward_score(kd, p_id):
+    return kd.getScore(p_id)

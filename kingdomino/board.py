@@ -58,11 +58,11 @@ class Boards:
                 n_squares,n_crowns = self.computeZone(p, x, y, board_seen, self.boards[p,x,y])
                 score += n_squares * n_crowns
         # The Middle Kingdom
-        if self.isCastleCentered(p):
-            score += 10
+        # if self.isCastleCentered(p):
+        #     score += 10
         # Harmony
-        if self.nb_planks[p] == self.max_planks:
-            score += 5
+        # if self.nb_planks[p] == self.max_planks:
+        #     score += 5
         
         return score
     
@@ -125,7 +125,9 @@ class Boards:
     
     
     def isCastleCentered(self, p):
-        return self.left_most[p] == (self.middle-2) and self.right_most[p] == (self.middle+2) and self.bottom_most[p] == (self.middle+2) and self.top_most[p] == (self.middle-2)
+        print(self.left_most[p])
+        return self.left_most[p] - self.right_most[p] == 0 and self.top_most[p] - self.bottom_most[p] == 0
+        # return self.left_most[p] == (self.middle-2) and self.right_most[p] == (self.middle+2) and self.bottom_most[p] == (self.middle+2) and self.top_most[p] == (self.middle-2)
       
 if __name__ == '__main__':
 

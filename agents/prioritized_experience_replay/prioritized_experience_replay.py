@@ -2,7 +2,7 @@ import torch
 import random
 import numpy as np
 
-from tree import SumTree
+from agents.prioritized_experience_replay.tree import SumTree
 
 
 class PrioritizedReplayBuffer:

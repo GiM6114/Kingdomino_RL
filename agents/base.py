@@ -5,7 +5,7 @@ import torch
 from itertools import product
 
 from agents.encoding import state_encoding
-from prioritized_experience_replay import PrioritizedReplayBuffer
+from agents.prioritized_experience_replay.prioritized_experience_replay import PrioritizedReplayBuffer
 
 class Player(ABC):
     @abstractmethod
@@ -31,8 +31,10 @@ class HumanPlayer(Player):
 
 
 class RandomPlayer(Player):
-    def action(self, state, p_a):
-        return random.choice(list(product(*p_a)))
+    def action(self, state, kingdomino):
+        return random.choice(kingdomino.getPossibleActions())
+    def process_reward(self, r, d):
+        pass
 
 
 class LearningAgent(Player, ABC):

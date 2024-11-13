@@ -12,6 +12,8 @@ from graphics import draw_obs
 from utils import switch, arr_except, cartesian_product
 from utils import arr2tuple
 
+# BON il faut réécrire toute cette merdasse en fonctionnelle
+
 class TileDeck:      
     def __init__(self):
         self.tiles = GET_TILE_DATA()
@@ -70,6 +72,10 @@ class Kingdomino:
 
     def reset(self, seed=None, options=None):
         # last position in list : plays last
+        self.obs = {
+            'Boards'         : np.zeros([self.n_players,2,self.board_size,self.board_size], dtype=np.int64),
+            'Current tiles'  : np.zeros([self.n_players,TILE_SIZE+1], dtype=np.int64),
+            'Previous tiles' : np.zeros([self.n_players,TILE_SIZE], dtype=np.int64)}
         self.reset_scores()
         self.prev_scores = np.zeros(self.n_players)
         self.tile_deck.reset()
@@ -143,22 +149,18 @@ class Kingdomino:
     # Previous tiles : 2 tile type, 2 crowns*
     # If get_obs: no current_tiles
     def _get_obs(self):
-        obs = {'Boards'         : np.zeros([self.n_players,2,self.board_size,self.board_size], dtype=np.int64),
-               'Current tiles'  : np.zeros([self.n_players,TILE_SIZE+1], dtype=np.int64),
-               'Previous tiles' : np.zeros([self.n_players,TILE_SIZE], dtype=np.int64)}
-        
         player_order = switch(np.arange(self.n_players), 0, self.current_player_id)
-        obs['Boards'][:,0] = self.boards.boards[player_order]
-        obs['Boards'][:,1] = self.boards.crowns[player_order]
-        obs['Previous tiles'] = self.players_previous_tile[player_order]
-        obs['Current tiles'][:,:-1] = self.current_tiles[:,:-1]
-        obs['Current tiles'][:,-1] = self.current_tiles[:,-1] == -1
+        self.obs['Boards'][:,0] = self.boards.boards[player_order]
+        self.obs['Boards'][:,1] = self.boards.crowns[player_order]
+        self.obs['Previous tiles'] = self.players_previous_tile[player_order]
+        self.obs['Current tiles'][:,:-1] = self.current_tiles[:,:-1]
+        self.obs['Current tiles'][:,-1] = self.current_tiles[:,-1] == -1
         for i,tile in enumerate(self.current_tiles):
-            obs['Current tiles'][i,:-1] = tile[:-1]
+            self.obs['Current tiles'][i,:-1] = tile[:-1]
             if tile[-1] != -1:
-                obs['Current tiles'][i,-1] = player_order[tile[-1]]
+                self.obs['Current tiles'][i,-1] = player_order[tile[-1]]
             else:
-                obs['Current tiles'][i,-1] = -1
+                self.obs['Current tiles'][i,-1] = -1
         
         for i,p_id in enumerate(player_order):
             # if self.current_tiles[self.players_current_tile_id[p_id],-1] != -1:
@@ -167,8 +169,8 @@ class Kingdomino:
             # else:
             #     obs['Current tiles'][i] = self.current_tiles[i]
  
-            obs['Previous tiles'][i] = self.players_previous_tile[p_id] # previous tiles should be ordered by player
-        return obs
+            self.obs['Previous tiles'][i] = self.players_previous_tile[p_id] # previous tiles should be ordered by player
+        return self.obs
         
 
     def step(self, action):
@@ -247,6 +249,56 @@ def checkPlacementValid(p_id, position, tile, boards):
             return
     raise GameException(f'{position} {tile} \n {boards.boards[p_id]} not next to castle or same type of env.')    
     
+
+def computeZone(x, y, board, board_seen, env_type):
+    s = board.shape[-1]
+    if 0 > x or x >= s or 0 > y or y >= s or board[0,x,y] != env_type or board_seen[x,y] == True:
+        return 0,0
+    board_seen[x,y] = True
+    add_squares = 1
+    add_crowns  = board[1,x,y]
+    for i in range(x-1, x+2):
+        for j in range(y-1, y+2):
+            # Get rid of diagonals
+            if i != x and j != y:
+                continue
+            add_squares_temp,add_crowns_temp = computeZone(
+                i, j, board, board_seen, env_type
+                )
+            add_squares += add_squares_temp
+            add_crowns += add_crowns_temp
+            
+    return add_squares, add_crowns
+
+
+
+def count(board):
+    s = board.shape[-1]
+    score = 0
+    board_seen = np.zeros((s,s), dtype=bool)
+    for x in range(s):
+        for y in range(s):
+            if 0 > x or x >= s or 0 > y or y >= s or board[0,x,y] in [-1,-2]:
+                continue
+            n_squares, n_crowns = computeZone(x, y, board, board_seen, board[0,x,y])
+            score += n_squares * n_crowns
+    return score
+
+# def boards_encoding(boards, device='cpu'):
+#     # boards : batch_size, 2 (tile type and crown), 5, 5
+#     boards = torch.as_tensor(boards, device=device, dtype=torch.int64)
+#     batch_size = boards.shape[0]
+#     board_size = boards.shape[-1]
+#     boards_one_hot = torch.zeros([
+#         batch_size,
+#         BOARD_CHANNELS+1, # (env + center + empty) + crowns 
+#         board_size,
+#         board_size],
+#         dtype=torch.int8,
+#         device=device)
+#     boards_one_hot.scatter_(1, (boards[:,0]+2).unsqueeze(1), 1)
+#     boards_one_hot[:,-1,:,:] = boards[:,1] # Place crowns at the end
+#     return boards_one_hot[:,1:]
 
 def isNeighbourToCastleOrSame(p_id, point, tile_type, boards):
     middle = boards.size // 2
@@ -331,7 +383,7 @@ if __name__ == '__main__':
                 if not env.first_turn:
                     reward = env.getReward(p_id)
                     print(f'Reward: {reward}')
-                    players[p_id].process_reward(reward=reward, next_state=state, done=False)
+                    players[p_id].process_reward(reward, False)
                 action = players[p_id].action(state, env)
                 print('Action:', action)
                 state,done,info = env.step(action)
