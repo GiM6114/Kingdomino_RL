@@ -16,6 +16,8 @@ class Player(ABC):
         pass
     def train(self):
         pass
+    def eval(self):
+        pass
     def test(self):
         pass
     

@@ -7,6 +7,9 @@ class Zone:
         pass
 
 class Boards:
+    '''
+        Holds all the boards of a kingdomino env
+    '''
     def __init__(self, size, n_players):
         self.max_planks = 12
         self.size = size
@@ -45,7 +48,7 @@ class Boards:
             self.right_most[p] = max(self.right_most[p], np.max(position[0,:]))
             self.bottom_most[p] = max(self.bottom_most[p], np.max(position[1,:]))
             self.top_most[p] = min(self.top_most[p], np.min(position[1,:])) # inverted for display
-        self.crowns[p,position[0],position[1]] = tile[2:4]    
+        self.crowns[p,position[0],position[1]] = tile[2:4]
 
     def count(self, p):
         _,x_size,y_size = self.boards.shape

@@ -2,13 +2,11 @@ import random
 import numpy as np
 from copy import deepcopy
 
-from agent.base import Player
-from kingdomino import Kingdomino
+from agents.base import Player
+from kingdomino.kingdomino import Kingdomino
 from printer import Printer
 
-class AggressivePlayer(Player):
-    def action(self, state, kingdomino):
-        actions = kingdomino.getPossibleActions()
+
     
 def around_center(position):
     for point in position:
@@ -64,39 +62,77 @@ class SelfCenteredPlayer(Player):
     
 #%%
 
+import multiprocess
+from utils import arr_except
+
 class MPC_Agent(Player):
-    
-    def __init__(self, n_rollouts, player_id):
+    '''
+        Model Predictive Control Agent
+        Does rollouts until end of game for each action
+    '''
+    def __init__(self, n_rollouts, n_processes=None, id=None):
+        self.id = id
         self.n_rollouts = n_rollouts
-        self.id = player_id
-    
+        if n_processes is None:
+            self.n_processes = multiprocess.cpu_count()
+
     def action(self, state, kingdomino):
         actions = kingdomino.getPossibleActions()
         best_action = None
         best_result = -np.inf
         for action in actions:
-            print(action)
-            # do the action in deepcopied env
-            # unroll with random policy
-            result = 0
-            for i in range(self.n_rollouts):
-                print(i)
-                kingdomino_copy = deepcopy(kingdomino)
-                result += self.rollout(kingdomino_copy, action)
+            result = self.parallel_rollout(kingdomino, action, self.n_rollouts, self.n_processes)
             if result > best_result:
                 best_action = action
-                
+                best_result = result
         return best_action
+    
+    def parallel_rollout(self, kingdomino, action, n_rollouts, n_processes):
+        # results = []
+        # for i in range(n_rollouts):
+        #     results.append(self.rollout(deepcopy(kingdomino), action))
+        with multiprocess.Pool(processes=n_processes) as pool:
+            results = pool.starmap(
+                self.rollout, 
+                [(deepcopy(kingdomino), action) for _ in range(n_rollouts)]
+            )
+        return sum(results)
 
     def rollout(self, kingdomino, action):
+        kingdomino.compute_obs = False
         done = False
         Printer.print('Copied KDs order :', kingdomino.order)
         Printer.print('Copied KDs current player id :', kingdomino.current_player_id)
         while not done:
-            terminated = kingdomino.step(action)
-            done = terminated
+            _,done = kingdomino.step(action)
             if not done:
-                action = kingdomino.getRandomAction()
-        scores = kingdomino.scores()
-        final_result = self.id == np.argmax(scores)
-        return final_result
+                action = random.choice(kingdomino.getPossibleActions())
+        scores = kingdomino.getScores()
+        delta = scores[self.id] - np.mean(arr_except(scores, except_id=self.id))
+        return delta
+    
+if __name__ == '__main__':
+    from tqdm import tqdm
+    from agents.base import RandomPlayer
+    from kingdomino.rewards import reward_last_delta_quantitative
+    from IPython.core.display import Image, display
+    from graphics import draw_obs
+
+    env = Kingdomino(5, random_start_order=False, n_players=2, reward_fn=None)
+    players = [MPC_Agent(8*1, id=0), RandomPlayer()]
+    n_episodes = 1
+    for i in tqdm(range(n_episodes), position=0, leave=False):
+        state = env.reset()
+        done = False
+        s = 0
+        while not done:
+            for player_id in env.order:
+                print(f"PLAYER {player_id} TURN")
+                display(draw_obs(state))
+                action = players[player_id].action(state, env)
+                print(action)
+                state,done = env.step(action)
+                if done:
+                    break
+    print('Final State')
+    display(draw_obs(state))

@@ -3,42 +3,46 @@ import numpy as np
 import torch
 from IPython.core.display import Image, display
 from tqdm import tqdm
-from multiprocessing import Pool
+import multiprocessing
 
 from graphics import draw_obs
 
-def train_parallel(env, players, n_episodes_per_cores, n_processes):
-    # Execute in parallel with different storage
-    # Put storage in common in one big storage
-    # (outside this function : train on this big storage)
-    with Pool(processes=n_processes) as pool:
+# def train_parallel(env, players, n_episodes_per_cores, n_processes=None):
+#     # Execute in parallel with different storage
+#     # Put storage in common in one big storage
+#     # (outside this function : train on this big storage)
+#     if n_processes is None:
+#         n_processes = multiprocessing.cpu_count()
+#     with multiprocessing.Pool(processes=n_processes) as pool:
+#         data = pool.starmap(func, iterable)
         
     
-    for player in players:
-        player.train()
-    n_players = len(players)
-    rewards_tracker = np.zeros((n_episodes,n_players))
-    pbar = tqdm(range(n_episodes))
-    for i in pbar:
-        s = env.reset()
-        d = False
-        sum_rewards = np.zeros(n_players)
-        while not d:
-            for p_id in env.order:
-                if not env.first_turn:
-                    r = env.getReward(p_id)
-                    players[p_id].process_reward(r, False)
-                    sum_rewards[p_id] += r
-                a = players[p_id].action(s, env.getPossibleTilesPositions())
-                s,d,info = env.step(a)
-            if d:
-                for i,player in enumerate(players):
-                    loss = players[p_id].process_reward(r, d)
-                    if loss is not None:
-                        pbar.set_postfix(**loss)
-                    sum_rewards[p_id] += r
-        rewards_tracker[i] = sum_rewards
-    return rewards_tracker
+    
+#     for player in players:
+#         player.train()
+#     n_players = len(players)
+#     rewards_tracker = np.zeros((n_episodes,n_players))
+#     pbar = tqdm(range(n_episodes))
+#     for i in pbar:
+#         s = env.reset()
+#         d = False
+#         sum_rewards = np.zeros(n_players)
+#         while not d:
+#             for p_id in env.order:
+#                 if not env.first_turn:
+#                     r = env.getReward(p_id)
+#                     players[p_id].process_reward(r, False)
+#                     sum_rewards[p_id] += r
+#                 a = players[p_id].action(s, env.getPossibleTilesPositions())
+#                 s,d,info = env.step(a)
+#             if d:
+#                 for i,player in enumerate(players):
+#                     loss = players[p_id].process_reward(r, d)
+#                     if loss is not None:
+#                         pbar.set_postfix(**loss)
+#                     sum_rewards[p_id] += r
+#         rewards_tracker[i] = sum_rewards
+#     return rewards_tracker
 
 def test(env, players, n_episodes, verbose=-1):
     with torch.no_grad():

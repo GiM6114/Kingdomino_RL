@@ -38,6 +38,26 @@ env = Kingdomino(
     board_size=board_size,
     reward_fn=reward_fns[hp['reward_name_id']])
 
+for e in tqdm(range(n_epochs), position=0, leave=True):
+    boards = np.zeros((n_episodes_per_epoch, 13, len(players), 2, board_size, board_size), dtype=int)
+    scores = np.zeros((n_episodes_per_epoch, 13, len(players)), dtype=int)
+    for i in tqdm(range(n_episodes_per_epoch), position=0, leave=False):
+        state = env.reset()
+        done = False
+        s = 0
+        while not done:
+            for player_id in env.order:
+                action = players[player_id].action(state, env)
+                boards[i, s, player_id] = state['Boards'][0]
+                reward = env.getReward(player_id)
+                scores[i, s, player_id] = reward
+                state,done,info = env.step(action)
+                if done:
+                    break
+            s += 1
+    np.save(os.path.join(path, f'boards_{e}.npy'), boards)
+    np.save(os.path.join(path, f'scores_{e}.npy'), scores)
+
 for i in range(n_episodes):
     state = env.reset()
     done = False

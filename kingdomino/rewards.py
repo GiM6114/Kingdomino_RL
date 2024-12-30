@@ -7,7 +7,14 @@ def get_delta_current_best(current, scores):
     if best_id >= current:
         best_id += 1
     return scores[current] - scores[best_id]
-     
+  
+def reward_last_delta_quantitative(kd, player_id):
+    if kd.first_turn:
+        return 0
+    if not kd.empty_end_turn and not (kd.last_turn and kd.current_player_itr == kd.n_players-1):
+        return 0
+    scores = kd.getScores()
+    return scores[kd.current_player_id] - np.mean(arr_except(scores, except_id=kd.current_player_id))
 
 def reward_last_quantitative(kd):
     if kd.first_turn:

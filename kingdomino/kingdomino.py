@@ -9,10 +9,7 @@ from setup import GET_TILE_DATA, TILE_SIZE, N_TILE_TYPES
 from kingdomino.board import Boards
 from printer import Printer
 from graphics import draw_obs
-from utils import switch, arr_except, cartesian_product
-from utils import arr2tuple
-
-# BON il faut réécrire toute cette merdasse en fonctionnelle
+from utils import switch, arr_except, cartesian_product, arr2tuple
 
 class TileDeck:      
     def __init__(self):
@@ -60,10 +57,13 @@ class Kingdomino:
     
     def __init__(self, 
                  board_size,
+                 random_start_order=True,
                  n_players=None, 
                  render_mode=None,
-                 kingdomino=None,
-                 reward_fn=lambda x,y: 0):
+                 reward_fn=lambda x,y: 0,
+                 compute_obs=True):
+        self.compute_obs = compute_obs
+        self.random_start_order = random_start_order
         self.board_size = board_size
         self.getReward = lambda p_id: reward_fn(self, p_id)
         self.tile_deck = TileDeck()
@@ -83,7 +83,10 @@ class Kingdomino:
         self.players_previous_tile = repeat(Kingdomino.empty_tile, 't -> p t', p=self.n_players)
         self.current_tiles = -np.ones((self.n_players, TILE_SIZE+1), dtype='int64')
         self.boards = Boards(size=self.board_size, n_players=self.n_players)
-        self.new_order = np.random.permutation(self.n_players)
+        if self.random_start_order:
+            self.new_order = np.random.permutation(self.n_players)
+        else:
+            self.new_order = np.array([0, 1])
         self.order = self.new_order.copy()
         self.current_player_itr = 0
         self.turn_id = 0
@@ -149,6 +152,8 @@ class Kingdomino:
     # Previous tiles : 2 tile type, 2 crowns*
     # If get_obs: no current_tiles
     def _get_obs(self):
+        if not self.compute_obs:
+            return None
         player_order = switch(np.arange(self.n_players), 0, self.current_player_id)
         self.obs['Boards'][:,0] = self.boards.boards[player_order]
         self.obs['Boards'][:,1] = self.boards.crowns[player_order]
@@ -189,7 +194,7 @@ class Kingdomino:
             self.current_player_itr == (self.n_players-1)
             
         self.current_player_itr += 1
-        return self._get_obs(), done, {'Scores':self.getScores()}
+        return self._get_obs(), done#, {'Scores':self.getScores()}
        
 
     def _pickTile(self, tile_id):
@@ -212,8 +217,16 @@ class Kingdomino:
             tiles_possible = (-1,)
         else:
             tiles_possible = arr2tuple(np.where(self.current_tiles[:,-1] == -1)[0])
+            
         if self.first_turn:
             positions_possible = (arr2tuple(Kingdomino.discard_tile),)
+        elif self.turn_id == 2:
+            # Avoid bunch of symmetries appearing on first round (without computational overhead)
+            mid = self.board_size // 2
+            positions_possible = np.array([[(mid,mid-1),(mid,mid-2)],
+                                           [(mid,mid-2),(mid,mid-1)],
+                                           [(mid,mid-1),(mid-1,mid-1)],
+                                           [(mid-1,mid-1),(mid,mid-1)]])
         else:
             # print('Previous tiles of current player:', self.players_previous_tile[self.current_player_id])
             # print('Player id:', self.current_player_id)
@@ -230,24 +243,23 @@ class Kingdomino:
 # position : TilePosition
 # inversed false : position.p1 corresponds to first tile
 # TODO : perhaps speed this up with position as a numpy array
+# TODO : this should not work with exceptions (a lot slower)
 def checkPlacementValid(p_id, position, tile, boards):
     # Check five square and no overlapping
     for point in position:
         if (not boards.size > point[0] >= 0) or (not boards.size > point[1] >= 0):
-            raise GameException(f'{point[0]} or {point[1]} wrong index')
+            return False
         if not boards.isInFiveSquare(p_id, point):
-            raise GameException(f'{point} is not in a five square.')
+            return False
         if boards.getBoard(p_id, point[0], point[1]) != -1 or \
             boards.getBoard(p_id, point[0], point[1]) == -2:
-            raise GameException(f'Overlapping at point {point}.')
+            return False
     
-    # print('Tile', tile)
-    # print('Position', position)
     # Check that at least one position is near castle or near same type of env
     for i,point in enumerate(position):
         if isNeighbourToCastleOrSame(p_id, point, tile[i], boards):
-            return
-    raise GameException(f'{position} {tile} \n {boards.boards[p_id]} not next to castle or same type of env.')    
+            return True
+    return False  
     
 
 def computeZone(x, y, board, board_seen, env_type):
@@ -325,33 +337,61 @@ def isNeighbourToCastleOrSame(p_id, point, tile_type, boards):
     # print('Not next to')    
     return False 
 
+def tile_symmetrical(tile):
+    return tile[0] == tile[1] and tile[2] == tile[3]
+
+# odd shaped array only I think ? (board size always odd anyways)
+def array_symmetrical(array, axis):
+    first = np.take(array, indices=range(array.shape[axis]//2), axis=axis)
+    second = np.take(array, indices=range(array.shape[axis]//2+1, array.shape[axis]), axis=axis)
+    return (first == second).all()
+
+def board_symmetrical(boards, p_id, axis):
+    tiles = array_symmetrical(boards.boards[p_id], axis=axis)
+    crowns = array_symmetrical(boards.crowns[p_id], axis=axis)
+    return tiles and crowns
+
+# TODO : actually should check for symmetries in a consistent manner by comparing
+# board ouputs maybe (should be an option at least, so not too many actions possible)
 def getPossiblePositions(tile, boards, every_pos, player_id):
+    '''
+        I will NOT understand any of this in 5 days but it gives
+        a minimal amount of possible actions taking into account
+        reflective symmetries (h, v) in a fairly optimized way ! 
+    '''
+    h_sym = board_symmetrical(boards, player_id, axis=0)
+    h_range = range(boards.size//2 + 1 if h_sym else boards.size)
+    v_sym = board_symmetrical(boards, player_id, axis=1)
+    v_range = range(boards.size//2 + 1 if v_sym else boards.size)
     available_pos = []
-    for i in range(boards.size):
-        for j in range(boards.size):
+    symmetrical = tile_symmetrical(tile)
+    for i in h_range:
+        for j in v_range:
             if boards.getBoard(player_id, i, j) == -1:
                 for _i in range(i-1,i+2):
                     for _j in range(j-1,j+2):
-                        if (_i != i and _j != j) or (_i==i and _j==j) or boards.getBoard(player_id, _i, _j) != -1:
+                        if (_i != i and _j != j) or (_i==i and _j==j):
                             continue
-                        try:
-                            pos = ((i,j),(_i,_j))
-                            checkPlacementValid(
-                                p_id=player_id, 
-                                position=pos, 
-                                tile=tile, 
-                                boards=boards)
+                        # If symmetry and beyond axis, ignore
+                        if (h_sym and _i > boards.size//2) or (v_sym and _j > boards.size//2):
+                            continue
+                        pos = ((i,j),(_i,_j))
+                        valid = checkPlacementValid(
+                            p_id=player_id, 
+                            position=pos, 
+                            tile=tile, 
+                            boards=boards)
+                        if valid and not (symmetrical and ((_i,_j),(i,j)) in available_pos):
                             available_pos.append(pos)
                             if not every_pos:
                                 return available_pos
-                        except GameException:
-                            pass
     if len(available_pos) == 0:
         return [arr2tuple(Kingdomino.discard_tile)]
     return available_pos
 
-def isTilePlaceable(tile, board):
-    return getPossiblePositions(tile, board, every_pos=False)
+# TODO : check if first element is discard tile
+# def isTilePlaceable(tile, board):
+#     return getPossiblePositions(tile, board, every_pos=False)
 
 #%%
 
@@ -386,7 +426,7 @@ if __name__ == '__main__':
                     players[p_id].process_reward(reward, False)
                 action = players[p_id].action(state, env)
                 print('Action:', action)
-                state,done,info = env.step(action)
+                state,done = env.step(action)
                 print(state['Current tiles'])
                 print(env.current_tiles)
                 display(draw_obs(state))

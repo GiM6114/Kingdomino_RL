@@ -6,7 +6,6 @@ from abc import ABC, abstractmethod
 import os
 
 from networks import PlayerFocusedFC, PlayerFocusedACNN
-from prioritized_experience_replay import PrioritizedReplayBuffer
 from agents.encoding import state_encoding
 from agents.base import LearningAgent
 from agents.encoding import TileInterface, CoordinateInterface  
@@ -17,6 +16,11 @@ from agents.encoding import ActionInterface, BOARD_CHANNELS, TILE_ENCODING_SIZE,
 from kingdomino.utils import compute_n_positions
 
 class SequentialDQN_AgentInterface:
+    '''
+        Implements two DQNs, one for the action of selecting a tile among the possible choices,
+        the other for selecting coordinates for where previous tile should go.
+        TODO: however, the networks should share beginning of the architecture ?
+    '''
     def __init__(self, log_dir, **kwargs):
         self.device = kwargs['device']
         self.tile_selector = DQN_Agent(
