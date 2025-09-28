@@ -4,6 +4,7 @@ from itertools import product
 from copy import deepcopy
 from einops import rearrange,repeat
 from operator import itemgetter
+from copy import deepcopy
 
 from setup import GET_TILE_DATA, TILE_SIZE, N_TILE_TYPES
 from kingdomino.board import Boards
@@ -19,6 +20,9 @@ class TileDeck:
     def reset(self):
         self.tiles = np.random.permutation(self.tiles)
         self.idx = 0
+        
+    def shuffle_remaining_tiles(self):
+        self.tiles[self.idx:] = np.random.permutation(self.tiles[self.idx:])
     
     def draw(self, n):
         if self.idx + n > self.tiles.shape[0]:
@@ -60,15 +64,26 @@ class Kingdomino:
                  random_start_order=True,
                  n_players=None, 
                  render_mode=None,
-                 reward_fn=lambda x,y: 0,
+                 reward_fn=None,
                  compute_obs=True):
         self.compute_obs = compute_obs
         self.random_start_order = random_start_order
         self.board_size = board_size
-        self.getReward = lambda p_id: reward_fn(self, p_id)
+
+        if reward_fn is None:
+            reward_fn = self.default_reward
+        self.reward_fn = reward_fn
+
         self.tile_deck = TileDeck()
         self.n_players = n_players
         self.n_turns = 13
+        
+    def getReward(self, p_id):
+        return self.reward_fn(self, p_id)
+
+    @staticmethod
+    def default_reward(env, p_id):
+        return 0
 
     def reset(self, seed=None, options=None):
         # last position in list : plays last
@@ -221,12 +236,11 @@ class Kingdomino:
         if self.first_turn:
             positions_possible = (arr2tuple(Kingdomino.discard_tile),)
         elif self.turn_id == 2:
-            # Avoid bunch of symmetries appearing on first round (without computational overhead)
+            # Quick positions on first round
             mid = self.board_size // 2
-            positions_possible = np.array([[(mid,mid-1),(mid,mid-2)],
-                                           [(mid,mid-2),(mid,mid-1)],
-                                           [(mid,mid-1),(mid-1,mid-1)],
-                                           [(mid-1,mid-1),(mid,mid-1)]])
+            positions_possible = [[(mid,mid-1),(mid,mid-2)], [(mid,mid-1),(mid-1,mid-1)]]
+            if not tile_symmetrical(tile=self.players_previous_tile[self.current_player_id]):
+                positions_possible.extend([[(mid,mid-2),(mid,mid-1)], [(mid-1,mid-1),(mid,mid-1)]])
         else:
             # print('Previous tiles of current player:', self.players_previous_tile[self.current_player_id])
             # print('Player id:', self.current_player_id)
@@ -388,6 +402,8 @@ def getPossiblePositions(tile, boards, every_pos, player_id):
     if len(available_pos) == 0:
         return [arr2tuple(Kingdomino.discard_tile)]
     return available_pos
+
+
 
 # TODO : check if first element is discard tile
 # def isTilePlaceable(tile, board):

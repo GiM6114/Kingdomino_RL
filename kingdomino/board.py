@@ -89,20 +89,6 @@ class Boards:
                 
         return add_squares, add_crowns
     
-    def getTerritories(self):
-        x_size,y_size = self.board.shape
-        territories = []
-        board_seen = np.zeros_like(self.board, dtype='int8')
-        Printer.print('Left, right, bottom, top :', self.left_most, self.right_most, self.bottom_most, self.top_most)
-        for x in range(x_size):
-            for y in range(y_size):
-                if self.getBoard(x,y) in [-1,-2]:
-                    continue
-                territory = self.getTerritory(x, y, board_seen, self.board[x,y])
-                if len(territory) != 0:           
-                    territories.append((territory,self.board[x,y]))
-        return territories
-    
     def getTerritory(self, x, y, board_seen, env_type):
         if self.getBoard(x, y) != env_type or board_seen[x,y] == 1:
             return []
@@ -132,6 +118,42 @@ class Boards:
         return self.left_most[p] - self.right_most[p] == 0 and self.top_most[p] - self.bottom_most[p] == 0
         # return self.left_most[p] == (self.middle-2) and self.right_most[p] == (self.middle+2) and self.bottom_most[p] == (self.middle+2) and self.top_most[p] == (self.middle-2)
       
+        
+def get_territories(board):
+    x_size,y_size = board.shape
+    territories = []
+    board_seen = np.zeros_like(board, dtype='int8')
+    for x in range(x_size):
+        for y in range(y_size):
+            if get_board(board, x, y) in [-1,-2]:
+                continue
+            territory = get_territory(board, x, y, board_seen, board[x,y])
+            if len(territory) != 0:           
+                territories.append((territory, board[x,y]))
+    return territories  
+
+def get_territory(board, x, y, board_seen, env_type):
+    if get_board(board, x, y) != env_type or board_seen[x,y] == 1:
+        return []
+    board_seen[x,y] = 1
+    
+    add_points = [(x,y)]
+    for i in range(x-1, x+2):
+        for j in range(y-1, y+2):
+            # Get rid of diagonals
+            if i != x and j != y:
+                continue
+            adjacent_points = get_territory(board, i, j, board_seen, env_type)
+            add_points += adjacent_points
+    
+    return add_points
+
+def get_board(board, x, y):
+    size = board.shape[0]
+    if size > x >= 0 and size > y >= 0:
+        return board[x,y]
+    return -1      
+
 if __name__ == '__main__':
 
     test_board = Board()

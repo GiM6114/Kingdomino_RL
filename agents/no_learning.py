@@ -1,9 +1,11 @@
 import random
 import numpy as np
 from copy import deepcopy
+from itertools import product
 
 from agents.base import Player
 from kingdomino.kingdomino import Kingdomino
+from kingdomino.board import get_territories
 from printer import Printer
 
 
@@ -62,22 +64,58 @@ class SelfCenteredPlayer(Player):
     
 #%%
 
-import multiprocess
+import multiprocessing
+import random
+import numpy as np
+from copy import deepcopy
+from itertools import product
+
+from agents.base import Player
+from kingdomino.kingdomino import Kingdomino
+from kingdomino.board import get_territories
+from printer import Printer
 from utils import arr_except
 
 class MPC_Agent(Player):
     '''
-        Model Predictive Control Agent
+        Model Predictive Control agent
         Does rollouts until end of game for each action
     '''
-    def __init__(self, n_rollouts, n_processes=None, id=None):
+    def __init__(self, n_rollouts, n_processes=None, id=None, n_zones_only=False):
+        '''
+            n_zones only : only applies MPC on position placements that minimize nb of regions
+            Example : if 2 open tiles, and only one placements lead to 0 new regions, then two actions considered in rollouts
+        '''
+        self.n_zones_only = n_zones_only
         self.id = id
         self.n_rollouts = n_rollouts
         if n_processes is None:
-            self.n_processes = multiprocess.cpu_count()
+            self.n_processes = multiprocessing.cpu_count()
+
+    def get_opt_positions(self, kingdomino):
+        tiles_possible, positions_possible = kingdomino.getPossibleTilesPositions()
+        lowest_n_regions = np.inf
+        opt_positions = []
+        for position in positions_possible:
+            position = np.array(position)
+            tile = kingdomino.players_previous_tile[self.id]
+            board = kingdomino.boards.boards[self.id].copy()
+            board[position.T[0],position.T[1]] = tile[:2]
+            n_regions = len(get_territories(board))
+            if n_regions < lowest_n_regions:
+                lowest_n_regions = n_regions
+                opt_positions = [position]
+            elif n_regions == lowest_n_regions:
+                opt_positions.append(position)
+        return list(product(tiles_possible, opt_positions))
 
     def action(self, state, kingdomino):
-        actions = kingdomino.getPossibleActions()
+        if self.n_zones_only:
+            actions = self.get_opt_positions(kingdomino)
+        else:
+            actions = kingdomino.getPossibleActions()
+        if len(actions) == 1:
+            return actions[0]
         best_action = None
         best_result = -np.inf
         for action in actions:
@@ -88,28 +126,46 @@ class MPC_Agent(Player):
         return best_action
     
     def parallel_rollout(self, kingdomino, action, n_rollouts, n_processes):
-        # results = []
-        # for i in range(n_rollouts):
-        #     results.append(self.rollout(deepcopy(kingdomino), action))
-        with multiprocess.Pool(processes=n_processes) as pool:
-            results = pool.starmap(
-                self.rollout, 
-                [(deepcopy(kingdomino), action) for _ in range(n_rollouts)]
-            )
+        results = []
+        for i in range(n_rollouts):
+            results.append(self.rollout(deepcopy(kingdomino), action))
+        # with multiprocessing.Pool(processes=n_processes) as pool:
+        #     print('starting rollouts')
+        #     results = pool.starmap(
+        #         self.rollout, 
+        #         [(copy_kingdomino(kingdomino), action) for _ in range(n_rollouts)]
+        #     )
         return sum(results)
 
     def rollout(self, kingdomino, action):
+        '''
+            In the rollout:
+                This player minimizes n_territories
+                Other player does random moves
+        '''
         kingdomino.compute_obs = False
         done = False
-        Printer.print('Copied KDs order :', kingdomino.order)
-        Printer.print('Copied KDs current player id :', kingdomino.current_player_id)
+        _,done = kingdomino.step(action)
         while not done:
-            _,done = kingdomino.step(action)
-            if not done:
-                action = random.choice(kingdomino.getPossibleActions())
+            for player_id in kingdomino.order:
+                if player_id == self.id:
+                    action = random.choice(self.get_opt_positions(kingdomino))
+                else:    
+                    action = random.choice(kingdomino.getPossibleActions())
+                _,done = kingdomino.step(action)
+                if done:
+                    break
         scores = kingdomino.getScores()
         delta = scores[self.id] - np.mean(arr_except(scores, except_id=self.id))
         return delta
+    
+def copy_kingdomino(kingdomino):
+    '''
+        Returns a kingdomino in the same game state as the given kingdomino
+    '''
+    k_copy = deepcopy(kingdomino)
+    k_copy.tile_deck.shuffle_remaining_tiles() # no advantages of knowing rest of the cards
+    return k_copy
     
 if __name__ == '__main__':
     from tqdm import tqdm
@@ -119,7 +175,7 @@ if __name__ == '__main__':
     from graphics import draw_obs
 
     env = Kingdomino(5, random_start_order=False, n_players=2, reward_fn=None)
-    players = [MPC_Agent(8*1, id=0), RandomPlayer()]
+    players = [MPC_Agent(8*1, id=0, n_zones_only=True), RandomPlayer()]
     n_episodes = 1
     for i in tqdm(range(n_episodes), position=0, leave=False):
         state = env.reset()
@@ -136,3 +192,4 @@ if __name__ == '__main__':
                     break
     print('Final State')
     display(draw_obs(state))
+    print(env.getScores())
