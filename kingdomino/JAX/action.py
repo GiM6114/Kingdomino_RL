@@ -1,11 +1,47 @@
 import jax.numpy as jnp
 
-from kingdomino.JAX.env import ORIENTATIONS
+from kingdomino.JAX.utils import ORIENTATIONS
+from kingdomino.JAX.env import BOARD_SIZE
+
+ALL_PLACEMENTS = generate_placements(BOARD_SIZE)
+N_PLACEMENTS = len(ALL_PLACEMENTS)
+
+def pick_tile(state, player_id, tile_id):
+    """
+    Attributes a tile to a player and updates next turn order.
+    Assumes:
+        - tile_id is valid
+        - tile is not already taken
+        - current_tiles are sorted by ascending tile value
+    """
+    current_tiles = state.current_tiles.at[tile_id, -1].set(player_id)
+    new_order = state.new_order.at[tile_id].set(player_id)
+    return state.replace(
+        current_tiles=current_tiles,
+        new_order=new_order,
+    )
+
+def place_tile(state, player_id, position):
+    tile = state.previous_tiles[player_id]
+    boards = state.boards.at[player_id, position[0], position[1]].set(tile[0])
+    boards = state.boards.at[player_id, position[2], position[3]].set(tile[1])
+    crowns = state.crowns.at[player_id, position[0], position[1]].set(tile[2])
+    crowns = state.crowns.at[player_id, position[2], position[3]].set(tile[3])
+    return state.replace(
+        boards=boards,
+        crowns=crowns,
+    )
+
+def decode_action(action):
+    tile_id = action // N_PLACEMENTS
+    placement_id = action % N_PLACEMENTS
+    return tile_id,placement_id
 
 def generate_placements(board_size):
     """
     Returns array of valid placements:
         (x1, y1, x2, y2)
+    Called only once at the beginning
 
     Constraints:
         - both cells in bounds
@@ -20,16 +56,12 @@ def generate_placements(board_size):
     xs = xs.reshape(-1)
     ys = ys.reshape(-1)
 
-    # direction offsets (4-neighborhood)
-    dx = jnp.array([0, 1, 0, -1], dtype=jnp.int32)
-    dy = jnp.array([1, 0, -1, 0], dtype=jnp.int32)
-
     placements = []
 
-    for o in range(4):
+    for o in ORIENTATIONS:
 
-        x2 = xs + dx[o]
-        y2 = ys + dy[o]
+        x2 = xs + o[0]
+        y2 = ys + o[1]
 
         in_bounds = (
             (x2 >= 0) & (x2 < board_size) &

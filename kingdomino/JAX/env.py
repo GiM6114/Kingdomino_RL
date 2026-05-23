@@ -5,8 +5,11 @@ import jax.numpy as jnp
 from flax import struct
 
 from kingdomino.JAX.utils import draw_tiles, sort_tiles, EMPTY_TILE
+from kingdomino.action import decode_action, ALL_PLACEMENTS, pick_tile, place_tile
 
 #%%
+
+BOARD_SIZE = 5
 
 @struct.dataclass
 class State:
@@ -30,8 +33,6 @@ class State:
     deck_idx: jnp.int32
 
     done: jnp.bool_
-
-
 
 def reset(
     key,
@@ -136,102 +137,30 @@ def step(state, action, reward_fn,
         info
     """
 
-    # ======================================================
-    # Decode action
-    # ======================================================
-
     tile_id, placement_id = decode_action(action)
     position = ALL_PLACEMENTS[placement_id]
     player_id = state.current_player_id
 
-    # ======================================================
-    # Validate action
-    # ======================================================
-
-    valid = is_action_valid(
-        state=state,
-        tile_id=tile_id,
-        placement_id=placement_id,
-    )
-
-    # Invalid actions indicate a bug in masking/training
-    if not valid:
-        raise ValueError("Invalid action selected.")
-
-    # ======================================================
-    # Pick next tile
-    # ======================================================
-
-    next_state = jax.lax.cond(
-        is_last_turn(state),
-
-        # no tile selection on last turn
-        lambda s: s,
-
-        # normal tile selection
-        lambda s: pick_tile(
-            state=s,
-            tile_id=tile_id,
-        ),
-
-        state,
-    )
-
-    # ======================================================
-    # Place previous tile
-    # ======================================================
-
-    next_state = jax.lax.cond(
-        is_first_turn(state),
-
-        # no placement on first turn
-        lambda s: s,
-
-        # normal placement
-        lambda s: place_tile(
-            state=s,
-            player_id=player_id,
-            position=position,
-        ),
-
-        next_state,
-    )
-
-    # ======================================================
-    # Advance player iterator
-    # ======================================================
-
+    next_state = pick_tile(state=state, player_id=player_id, tile_id=tile_id,)
+    next_state = place_tile(state=next_state, player_id=player_id, position=position,)
     next_state = advance_turn(next_state)
 
-    # ======================================================
-    # Reward
-    # ======================================================
-
-    reward = reward_fn(
-        state,
-        action,
-        next_state,
-    )
-
-    # ======================================================
-    # Done
-    # ======================================================
+    reward = reward_fn(state, action, next_state)
 
     done = next_state.done
-
-    # ======================================================
-    # Observation
-    # ======================================================
-
     obs = build_observation(next_state)
-
-    # ======================================================
-    # Optional diagnostics
-    # ======================================================
-
     info = {}
 
     return next_state, obs, reward, done, info
+
+def advance_turn(state):
+    """
+        Advances current_player_itr and current_player_id
+        If current_player_itr goes back to 0, draw tiles and switch current_tiles to previous_tiles
+    """
+    n_players = len(state.boards)
+    current_player_itr = (current_player_itr + 1) % n_players
+    current_player_id = 
 
 def build_observation(state):
     """
