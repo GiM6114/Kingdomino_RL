@@ -1,7 +1,6 @@
 import random
 import numpy as np
 from itertools import product
-from copy import deepcopy
 from einops import rearrange,repeat
 from operator import itemgetter
 from copy import deepcopy
@@ -101,7 +100,7 @@ class Kingdomino:
         if self.random_start_order:
             self.new_order = np.random.permutation(self.n_players)
         else:
-            self.new_order = np.array([0, 1])
+            self.new_order = np.arange(self.n_players)
         self.order = self.new_order.copy()
         self.current_player_itr = 0
         self.turn_id = 0
@@ -220,10 +219,12 @@ class Kingdomino:
         self.players_current_tile_id[self.current_player_id] = tile_id
 
     def _placeTile(self, position, tile):
-        if (position < 0).any() or (position > self.board_size).any():
+        if (position < 0).any() or (position >= self.board_size).any():
             return
-        checkPlacementValid(self.current_player_id, position, tile, self.boards)
-        self.boards.placeTile(self.current_player_id, position, tile)
+        if checkPlacementValid(self.current_player_id, position, tile, self.boards):
+            self.boards.placeTile(self.current_player_id, position, tile)
+            return
+        raise GameException("Invalid Placement")
         
     # Does not output cartesian product of possible tiles and actions
     # Because some method might want to handle positions and then tile selection for instance
@@ -283,16 +284,16 @@ def computeZone(x, y, board, board_seen, env_type):
     board_seen[x,y] = True
     add_squares = 1
     add_crowns  = board[1,x,y]
-    for i in range(x-1, x+2):
-        for j in range(y-1, y+2):
-            # Get rid of diagonals
-            if i != x and j != y:
-                continue
-            add_squares_temp,add_crowns_temp = computeZone(
-                i, j, board, board_seen, env_type
-                )
-            add_squares += add_squares_temp
-            add_crowns += add_crowns_temp
+    for dx, dy in [(-1,0),(1,0),(0,-1),(0,1)]:
+        add_squares_temp, add_crowns_temp = computeZone(
+            x + dx,
+            y + dy,
+            board,
+            board_seen,
+            env_type
+        )
+        add_squares += add_squares_temp
+        add_crowns += add_crowns_temp
             
     return add_squares, add_crowns
 
@@ -304,7 +305,7 @@ def count(board):
     board_seen = np.zeros((s,s), dtype=bool)
     for x in range(s):
         for y in range(s):
-            if 0 > x or x >= s or 0 > y or y >= s or board[0,x,y] in [-1,-2]:
+            if 0 > x or x >= s or 0 > y or y >= s or board_seen[x,y] or board[0,x,y] in [-1,-2]:
                 continue
             n_squares, n_crowns = computeZone(x, y, board, board_seen, board[0,x,y])
             score += n_squares * n_crowns
@@ -358,6 +359,7 @@ def tile_symmetrical(tile):
 def array_symmetrical(array, axis):
     first = np.take(array, indices=range(array.shape[axis]//2), axis=axis)
     second = np.take(array, indices=range(array.shape[axis]//2+1, array.shape[axis]), axis=axis)
+    second = np.flip(second, axis=axis)
     return (first == second).all()
 
 def board_symmetrical(boards, p_id, axis):
