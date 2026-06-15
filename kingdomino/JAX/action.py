@@ -1,10 +1,7 @@
+import jax
 import jax.numpy as jnp
 
-from kingdomino.JAX.utils import ORIENTATIONS
-from kingdomino.JAX.env import BOARD_SIZE
-
-ALL_PLACEMENTS = generate_placements(BOARD_SIZE)
-N_PLACEMENTS = len(ALL_PLACEMENTS)
+from kingdomino.JAX.utils import ORIENTATIONS, PASS_POSITION
 
 def pick_tile(state, player_id, tile_id):
     """
@@ -22,73 +19,49 @@ def pick_tile(state, player_id, tile_id):
     )
 
 def place_tile(state, player_id, position):
-    tile = state.previous_tiles[player_id]
-    boards = state.boards.at[player_id, position[0], position[1]].set(tile[0])
-    boards = state.boards.at[player_id, position[2], position[3]].set(tile[1])
-    crowns = state.crowns.at[player_id, position[0], position[1]].set(tile[2])
-    crowns = state.crowns.at[player_id, position[2], position[3]].set(tile[3])
-    return state.replace(
-        boards=boards,
-        crowns=crowns,
+    is_pass = jnp.all(position == PASS_POSITION)
+    def do_nothing(_):
+        return state
+    def do_place(_):
+         tile = state.previous_tiles[player_id]
+         boards = state.boards.at[player_id, position[0], position[1]].set(tile[0])
+         boards = boards.at[player_id, position[2], position[3]].set(tile[1])
+         crowns = state.crowns.at[player_id, position[0], position[1]].set(tile[2])
+         crowns = crowns.at[player_id, position[2], position[3]].set(tile[3])
+         return state.replace(
+             boards=boards,
+             crowns=crowns,
+         )
+
+    return jax.lax.cond(
+        is_pass,
+        do_nothing,
+        do_place,
+        operand=None,
     )
 
-def decode_action(action):
-    tile_id = action // N_PLACEMENTS
-    placement_id = action % N_PLACEMENTS
-    return tile_id,placement_id
+def decode_action(action_id, placements):
 
-def generate_placements(board_size):
-    """
-    Returns array of valid placements:
-        (x1, y1, x2, y2)
-    Called only once at the beginning
+    tile_id = action_id // placements.shape[0]
+    placement_id = action_id % placements.shape[0]
 
-    Constraints:
-        - both cells in bounds
-        - neither cell is the center
-    """
+    position = placements[placement_id]
 
-    center = (board_size // 2, board_size // 2)
+    return jnp.concatenate(
+        [
+            jnp.array([tile_id], dtype=jnp.int32),
+            position,
+        ],
+        axis=0,
+    )
+def generate_actions(n_players, placements):
+    return jnp.concatenate((
+        jnp.repeat(jnp.arange(n_players), placements.shape[0])[:, None],
+        jnp.tile(placements, reps=(n_players,1))
+        ),
+        axis = 1)
 
-    coords = jnp.arange(board_size)
-    xs, ys = jnp.meshgrid(coords, coords, indexing="ij")
-
-    xs = xs.reshape(-1)
-    ys = ys.reshape(-1)
-
-    placements = []
-
-    for o in ORIENTATIONS:
-
-        x2 = xs + o[0]
-        y2 = ys + o[1]
-
-        in_bounds = (
-            (x2 >= 0) & (x2 < board_size) &
-            (y2 >= 0) & (y2 < board_size)
-        )
-
-        # exclude center for both endpoints
-        not_center_1 = ~((xs == center[0]) & (ys == center[1]))
-        not_center_2 = ~((x2 == center[0]) & (y2 == center[1]))
-
-        valid = in_bounds & not_center_1 & not_center_2
-
-        placements.append(
-            jnp.stack(
-                [
-                    xs[valid],
-                    ys[valid],
-                    x2[valid],
-                    y2[valid],
-                ],
-                axis=1,
-            )
-        )
-
-    return jnp.concatenate(placements, axis=0)
-
-def legal_placements_mask(board, placements, tile, center):
+def legal_placements_mask(board, placements, tile):
     """
     board: (S, S)
     placements: (N_P, 4) -> x1,y1,x2,y2
@@ -97,7 +70,7 @@ def legal_placements_mask(board, placements, tile, center):
     """
 
     S = board.shape[0]
-    cx, cy = center
+    center = S//2
 
     x1 = placements[:, 0]
     y1 = placements[:, 1]
@@ -114,7 +87,7 @@ def legal_placements_mask(board, placements, tile, center):
     )
 
     # -------------------------------------------------------
-    # 2. tile terrain types (THIS WAS MISSING)
+    # 2. tile terrain types
     # -------------------------------------------------------
 
     t1 = tile[0]
@@ -157,7 +130,7 @@ def legal_placements_mask(board, placements, tile, center):
         xn = x[:, None] + ORIENTATIONS[:, 0]
         yn = y[:, None] + ORIENTATIONS[:, 1]
 
-        return ((xn == cx) & (yn == cy)).any(axis=1)
+        return ((xn == center) & (yn == center)).any(axis=1)
 
     center_adj1 = touches_center(x1, y1)
     center_adj2 = touches_center(x2, y2)
@@ -171,7 +144,81 @@ def legal_placements_mask(board, placements, tile, center):
         (adj2 | center_adj2)
     )
 
-    return free & connected
+    placements_mask = free & connected
+    
+    # If no placement is possible, enable the first placement
+    has_any = jnp.any(placements_mask)
+    placements_mask = jax.lax.select(
+        has_any,
+        placements_mask.at[0].set(False),
+        jnp.zeros_like(placements_mask).at[0].set(True)
+    )    
+    return placements_mask
+
+def legal_tile_choices_masks(state):
+    return state.current_tiles[:,-1] == -1
+
+# Get random actions (very common across actors)
+
+def random_action(key, state, placements):
+    key1, key2 = jax.random.split(key)
+    tile_mask = legal_tile_choices_masks(state)
+    tile_probs = tile_mask.astype(jnp.float32)
+    tile_probs = tile_probs / jnp.sum(tile_probs)
+    tile_id = jax.random.choice(key1, tile_mask.shape[0], p=tile_probs)
+    placement_mask = legal_placements_mask(
+        state.boards[state.current_player_id],
+        placements,
+        state.previous_tiles[state.current_player_id])
+       
+    placement_probs = placement_mask.astype(jnp.float32)
+    placement_probs = placement_probs / jnp.sum(placement_probs)
+    placement_id = jax.random.choice(key2, placement_mask.shape[0], p=placement_probs)
+    return jnp.concatenate(
+        [
+            jnp.array([tile_id], dtype=jnp.int32),
+            placements[placement_id],
+        ],
+        axis=0,
+    )
+
+def get_legal_actions(state, placements):
+    """
+        Generate all tuples of legal actions (cartesian product of current tiles to pick and previous tile tile placement)
+        Pass is considered only legal when no other move is possible
+        Not jittable
+    """
+    tile_ids = jnp.where(legal_tile_choices_masks(state))[0]
+    placement_ids = jnp.where(legal_placements_mask(
+        state.boards[state.current_player_id],
+        placements,
+        state.previous_tiles[state.current_player_id]))[0]
+    placements = jnp.take(placements, placement_ids, axis=0)
+    A = tile_ids.shape[0]
+    B = placements.shape[0]
+
+    t_exp = jnp.repeat(tile_ids, B)
+    p_exp = jnp.tile(placements, (A, 1))
+
+    all_actions = jnp.concatenate([t_exp[:, None], p_exp], axis=1)
+    return all_actions
+
+def get_legal_action_mask(state, placements):
+    """
+        Same objective as get_legal_actions except it's jittable
+    """
+
+    tile_mask = legal_tile_choices_masks(state)
+
+    placement_mask = legal_placements_mask(
+        state.boards[state.current_player_id],
+        placements,
+        state.previous_tiles[state.current_player_id],
+    )
+    legal = tile_mask[:, None] & placement_mask[None, :]
+    return legal.reshape(-1)
+
+# Test the functions
 
 def test():
     """

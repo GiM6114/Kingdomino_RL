@@ -12,7 +12,7 @@ def GET_TILE_DATA():
     regexp = f'({types_or}):*([0-9])*,({types_or}):*([0-9])*;([0-9]+)'
     with open('tiles_data.txt') as f:
         lines = f.readlines()
-        tiles = np.zeros((len(lines),5))
+        tiles = np.zeros((len(lines),6), dtype=np.int32)
         for i,line in enumerate(lines):
             
             # Get rid of comments
@@ -35,7 +35,7 @@ def GET_TILE_DATA():
                 value = np.array([m.group(5)],
                                  dtype='int64')
                 
-                tile = np.concatenate((types, crowns, value))                
+                tile = np.concatenate((types, crowns, value, -np.ones_like(value)))                
                 tiles[i] = tile
             except Exception as e:
                 print(f'Error at line {i}')
